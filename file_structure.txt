@@ -1,0 +1,64 @@
+HWD-Attendance-System/
+│
+├── backend/                     # Node.js + Express REST API
+│   ├── node_modules/
+│   ├── src/
+│   │   ├── core/                # Core app logic and database setup
+│   │   │   ├── db.js            # Sequelize DB initialization
+│   │   │   ├── error-middleware.js
+│   │   │   └── models.js        # All Sequelize models (Admin, Events, Registrations, Attendance)
+│   │   │
+│   │   ├── features/            # Modular vertical slices
+│   │   │   ├── _shared/         # Shared middlewares/utilities (auth, etc.)
+│   │   │   ├── attendance/
+│   │   │   │   └── attendance.routes.js
+│   │   │   ├── auth/
+│   │   │   │   └── auth.routes.js
+│   │   │   ├── events/
+│   │   │   │   └── (future event controllers / routes)
+│   │   │   ├── registrations/
+│   │   │   │   └── registrations.routes.js
+│   │   │   └── reports/
+│   │   │       └── reports.routes.js
+│   │   │
+│   │   └── migrations/
+│   │       ├── cleanup-duplicates.js
+│   │
+│   ├── app.js                   # Main Express app entry
+│   ├── .env                     # Environment variables (DB config, JWT secret, etc.)
+│   ├── hwd.sqlite               # Local SQLite database file
+│   ├── run-migration.js         # CLI migration runner
+│   ├── package.json
+│   ├── package-lock.json
+│   └── README.md
+│
+├── frontend/                    # React + Vite single-page app (SPA)
+│   ├── node_modules/
+│   ├── src/
+│   │   ├── pages/               # Page-based routing
+│   │   │   ├── Attendance.tsx
+│   │   │   ├── Events.tsx
+│   │   │   ├── Landing.tsx
+│   │   │   ├── Login.tsx
+│   │   │   ├── NotFound.tsx
+│   │   │   ├── Registrations.tsx
+│   │   │   └── Reports.tsx
+│   │   │
+│   │   ├── services/
+│   │   │   └── api.ts           # Axios instance and API calls
+│   │   │
+│   │   └── ui/
+│   │       ├── AppLayout.tsx    # Main layout (navbar, sidebar, etc.)
+│   │       ├── index.css        # Global CSS (Tailwind base)
+│   │       └── main.tsx         # React root entry file
+│   │
+│   ├── index.html               # Root HTML entry
+│   ├── tailwind.config.js       # TailwindCSS config
+│   ├── postcss.config.js        # PostCSS config
+│   ├── tsconfig.json            # TypeScript config
+│   ├── vite-env.d.ts
+│   ├── package.json
+│   └── package-lock.json
+│
+├── context.txt                  # System and documentation context file
+└── README.md                    # Project overview and setup guide

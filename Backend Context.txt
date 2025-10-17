@@ -1,0 +1,994 @@
+Backend Context
+
+package.json
+`
+{
+  "name": "hwd-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/app.js",
+    "start": "node src/app.js",
+    "migrate": "node run-migration.js",
+    "lint": "echo 'no linter configured'"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-validator": "^7.2.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "sequelize": "^6.37.7",
+    "mysql2": "^3.11.3",
+    "sqlite3": "^5.1.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+
+`
+
+src\core\db.js
+`
+import { Sequelize } from 'sequelize';
+
+const rawDialect = process.env.DB_DIALECT || 'mysql';
+// Guard against misformatted env like: "mysql, DB_HOST=127.0.0.1, ..."
+const dialect = rawDialect.split(',')[0].trim().toLowerCase();
+
+export const sequelize = new Sequelize(
+  process.env.DB_NAME || 'hwd_db',
+  process.env.DB_USER || 'root',
+  process.env.DB_PASSWORD || '',
+  {
+    host: process.env.DB_HOST || '127.0.0.1',
+    port: Number(process.env.DB_PORT) || 3306,
+    dialect,
+    storage: dialect === 'sqlite' ? (process.env.DB_STORAGE || 'hwd.sqlite') : undefined,
+    logging: false,
+  }
+);
+
+`
+
+src\core\error-middleware.js
+`
+export function errorMiddleware(err, _req, res, _next) {
+  const status = err.status || 500;
+  const message = err.message || 'Internal Server Error';
+  const details = err.details;
+  res.status(status).json({ error: message, details });
+}
+
+
+`
+
+src\core\models.js
+`
+import { DataTypes } from 'sequelize';
+import { sequelize } from './db.js';
+
+export const Admin = sequelize.define('admin', {
+  admin_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  username: { type: DataTypes.STRING, unique: true, allowNull: false },
+  password_hash: { type: DataTypes.STRING, allowNull: false },
+});
+
+export const Dmag = sequelize.define('dmag', {
+  employee_no: { type: DataTypes.STRING, primaryKey: true },
+  employee_name: { type: DataTypes.STRING, allowNull: false },
+  department: { type: DataTypes.STRING },
+  age: { type: DataTypes.INTEGER },
+  gender: { type: DataTypes.ENUM('Male', 'Female') },
+});
+
+export const Event = sequelize.define('event', {
+  event_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  event_type: { type: DataTypes.STRING, allowNull: false },
+  event_name: { type: DataTypes.STRING, allowNull: false },
+  event_date: { type: DataTypes.DATEONLY, allowNull: false },
+}, {
+  indexes: [
+    {
+      unique: true,
+      fields: ['event_type', 'event_name']
+    }
+  ]
+});
+
+export const Registration = sequelize.define('registration', {
+  reg_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  employee_no: { type: DataTypes.STRING },
+  employee_name: { type: DataTypes.STRING },
+  department: { type: DataTypes.STRING },
+  event_id: { type: DataTypes.INTEGER, allowNull: false },
+});
+
+export const Attendance = sequelize.define('attendance', {
+  attendance_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  employee_no: { type: DataTypes.STRING },
+  employee_name: { type: DataTypes.STRING },
+  department: { type: DataTypes.STRING },
+  mode_of_attendance: { type: DataTypes.ENUM('Virtual', 'Onsite'), allowNull: false },
+  validation_status: { type: DataTypes.ENUM('Registered', 'Not Registered'), defaultValue: 'Not Registered' },
+  event_id: { type: DataTypes.INTEGER, allowNull: false },
+});
+
+export function registerModels() {
+  Registration.belongsTo(Event, { foreignKey: 'event_id' });
+  Event.hasMany(Registration, { foreignKey: 'event_id' });
+
+  Attendance.belongsTo(Event, { foreignKey: 'event_id' });
+  Event.hasMany(Attendance, { foreignKey: 'event_id' });
+}
+
+export async function syncDb() {
+  await sequelize.sync();
+}
+`
+
+attendance.routes.js
+`
+import { Router } from 'express';
+import multer from 'multer';
+import XLSX from 'xlsx';
+import { body, validationResult } from 'express-validator';
+import { Attendance, Registration, Event } from '../../core/models.js';
+import { sequelize } from '../../core/db.js';
+import { requireAuth } from '../_shared/auth-middleware.js';
+
+const upload = multer({ storage: multer.memoryStorage() });
+export const attendanceRouter = Router();
+
+async function computeValidationStatus(employeeNo, eventId) {
+  const match = await Registration.findOne({ where: { employee_no: employeeNo, event_id: eventId } });
+  return match ? 'Registered' : 'Not Registered';
+}
+
+attendanceRouter.get('/', requireAuth, async (req, res, next) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 10, 
+      sort = 'attendance_id', 
+      order = 'DESC', 
+      event_id,
+      employee_no,
+      employee_name,
+      department,
+      event_name
+    } = req.query;
+    const offset = (page - 1) * limit;
+    
+    const where = {};
+    if (event_id) where.event_id = event_id;
+    if (employee_no) where.employee_no = { [sequelize.Op.like]: `%${employee_no}%` };
+    if (employee_name) where.employee_name = { [sequelize.Op.like]: `%${employee_name}%` };
+    if (department) where.department = { [sequelize.Op.like]: `%${department}%` };
+    
+    const includeWhere = {};
+    if (event_name) includeWhere.event_name = { [sequelize.Op.like]: `%${event_name}%` };
+    
+    const { count, rows } = await Attendance.findAndCountAll({
+      where,
+      include: [{
+        model: Event,
+        where: Object.keys(includeWhere).length > 0 ? includeWhere : undefined,
+        required: Object.keys(includeWhere).length > 0
+      }],
+      order: [[sort, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+    
+    res.json({
+      attendance: rows,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+attendanceRouter.post(
+  '/',
+  requireAuth,
+  [
+    body('employee_no').optional().isString(),
+    body('employee_name').optional().isString(),
+    body('department').optional().isString(),
+    body('mode_of_attendance').isIn(['Virtual', 'Onsite']),
+    body('event_id').isInt(),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      
+      // Check for duplicate attendance
+      const existingAttendance = await Attendance.findOne({
+        where: {
+          employee_no: req.body.employee_no,
+          event_id: req.body.event_id
+        }
+      });
+      
+      if (existingAttendance) {
+        return res.status(409).json({ 
+          error: 'Duplicate attendance found', 
+          details: `Employee ${req.body.employee_no || req.body.employee_name} already has attendance recorded for this event` 
+        });
+      }
+      
+      const { employee_no, event_id } = req.body;
+      const validation_status = await computeValidationStatus(employee_no, event_id);
+      const created = await Attendance.create({ ...req.body, validation_status });
+      res.status(201).json(created);
+    } catch (e) {
+      if (e.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ 
+          error: 'Duplicate attendance found', 
+          details: 'This employee already has attendance recorded for this event' 
+        });
+      }
+      next(e);
+    }
+  }
+);
+
+attendanceRouter.put(
+  '/:id',
+  requireAuth,
+  [
+    body('employee_no').optional().isString(),
+    body('employee_name').optional().isString(),
+    body('department').optional().isString(),
+    body('mode_of_attendance').isIn(['Virtual', 'Onsite']),
+    body('event_id').isInt(),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      const attendance = await Attendance.findByPk(req.params.id);
+      if (!attendance) return res.status(404).json({ error: 'Attendance record not found' });
+      const { employee_no, event_id } = req.body;
+      const validation_status = await computeValidationStatus(employee_no, event_id);
+      await attendance.update({ ...req.body, validation_status });
+      res.json(attendance);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+attendanceRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const attendance = await Attendance.findByPk(req.params.id);
+    if (!attendance) return res.status(404).json({ error: 'Attendance record not found' });
+    await attendance.destroy();
+    res.json({ message: 'Attendance record deleted successfully' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req, res, next) => {
+  try {
+    const { buffer } = req.file || {};
+    if (!buffer) return res.status(400).json({ error: 'No file uploaded' });
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    let inserted = 0;
+    for (const row of rows) {
+      const eventId = Number(row['Event ID']);
+      const employeeNo = row['Employee No'] || null;
+      const validation_status = await computeValidationStatus(employeeNo, eventId);
+      await Attendance.create({
+        employee_no: employeeNo,
+        employee_name: row['Employee Name'] || null,
+        department: row['Department'] || null,
+        mode_of_attendance: row['Mode of Attendance'] || 'Virtual',
+        event_id: eventId,
+        validation_status,
+      });
+      inserted += 1;
+    }
+    res.json({ inserted });
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+
+`
+
+
+auth.routes.js
+`
+import { Router } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { body, validationResult } from 'express-validator';
+import { Admin } from '../../core/models.js';
+
+export const authRouter = Router();
+
+authRouter.post(
+  '/login',
+  [body('username').isString().notEmpty(), body('password').isString().notEmpty()],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+      const { username, password } = req.body;
+      const admin = await Admin.findOne({ where: { username } });
+      if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
+      const ok = await bcrypt.compare(password, admin.password_hash);
+      if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+      const token = jwt.sign({ sub: admin.admin_id, username }, process.env.JWT_SECRET || 'dev_secret', { expiresIn: '8h' });
+      res.json({ token });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+
+
+`
+
+events.routes.js
+`
+import { Router } from 'express';
+import multer from 'multer';
+import XLSX from 'xlsx';
+import { body, validationResult } from 'express-validator';
+import { sequelize } from '../../core/db.js';
+import { Event } from '../../core/models.js';
+import { requireAuth } from '../_shared/auth-middleware.js';
+
+const upload = multer({ storage: multer.memoryStorage() });
+export const eventsRouter = Router();
+
+eventsRouter.get('/', requireAuth, async (req, res, next) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 10, 
+      sort = 'event_id', 
+      order = 'DESC', 
+      type,
+      name,
+      date
+    } = req.query;
+    const offset = (page - 1) * limit;
+    
+    const where = {};
+    if (type) where.event_type = { [sequelize.Op.like]: `%${type}%` };
+    if (name) where.event_name = { [sequelize.Op.like]: `%${name}%` };
+    if (date) where.event_date = { [sequelize.Op.eq]: date };
+    
+    const { count, rows } = await Event.findAndCountAll({
+      where,
+      order: [[sort, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+    
+    res.json({
+      events: rows,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+eventsRouter.get('/search', requireAuth, async (req, res, next) => {
+  try {
+    const { type, name } = req.query;
+    const where = {};
+    if (type) where.event_type = { [sequelize.Op.like]: `%${type}%` };
+    if (name) where.event_name = { [sequelize.Op.like]: `%${name}%` };
+    const events = await Event.findAll({ where, order: [['event_name', 'ASC']], raw: true });
+    res.json(events.map(e => ({ id: e.event_id, label: `${e.event_type}: ${e.event_name}` })));
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+eventsRouter.post(
+  '/',
+  requireAuth,
+  [
+    body('event_type').isString().notEmpty(),
+    body('event_name').isString().notEmpty(),
+    body('event_date').isDate({ format: 'YYYY-MM-DD' }),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      
+      // Check for duplicate event
+      const existingEvent = await Event.findOne({
+        where: {
+          event_type: req.body.event_type,
+          event_name: req.body.event_name
+        }
+      });
+      
+      if (existingEvent) {
+        return res.status(409).json({ 
+          error: 'Duplicate event found', 
+          details: `Event "${req.body.event_name}" of type "${req.body.event_type}" already exists` 
+        });
+      }
+      
+      const created = await Event.create(req.body);
+      res.status(201).json(created);
+    } catch (e) {
+      if (e.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ 
+          error: 'Duplicate event found', 
+          details: 'Event type and name combination must be unique' 
+        });
+      }
+      next(e);
+    }
+  }
+);
+
+eventsRouter.put(
+  '/:id',
+  requireAuth,
+  [
+    body('event_type').optional().isString(),
+    body('event_name').optional().isString(),
+    body('event_date').optional().isDate({ format: 'YYYY-MM-DD' }),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      const event = await Event.findByPk(req.params.id);
+      if (!event) return res.status(404).json({ error: 'Event not found' });
+      
+      // Check for duplicate (excluding current)
+      const existingEvent = await Event.findOne({
+        where: {
+          event_type: req.body.event_type || event.event_type,
+          event_name: req.body.event_name || event.event_name,
+          event_id: { [sequelize.Op.ne]: req.params.id }
+        }
+      });
+      
+      if (existingEvent) {
+        return res.status(409).json({ 
+          error: 'Duplicate event found', 
+          details: `Event "${req.body.event_name || event.event_name}" of type "${req.body.event_type || event.event_type}" already exists` 
+        });
+      }
+      
+      await event.update(req.body);
+      res.json(event);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+eventsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const event = await Event.findByPk(req.params.id);
+    if (!event) return res.status(404).json({ error: 'Event not found' });
+    await event.destroy();
+    res.json({ message: 'Event deleted successfully' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// Helper to parse Excel/CSV dates (handles string, number, empty)
+function parseExcelDate(cell) {
+  if (!cell) return new Date();
+
+  if (typeof cell === 'string') {
+    // Trim and try native parse first (handles YYYY-MM-DD)
+    const trimmed = cell.trim();
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
+      return d.toISOString().split('T')[0];  // YYYY-MM-DD
+    }
+    // Manual parse for MM/DD/YYYY or DD-MM-YYYY
+    const parts = trimmed.split(/[-\/]/);
+    if (parts.length === 3) {
+      const nums = parts.map(p => parseInt(p, 10));
+      if (!isNaN(nums[0]) && !isNaN(nums[1]) && !isNaN(nums[2])) {
+        // Guess format: if first part > 12, assume YYYY; else MM/DD/YYYY
+        if (nums[0] > 31) {  // Likely YYYY
+          return `${nums[0]}-${String(nums[1]).padStart(2, '0')}-${String(nums[2]).padStart(2, '0')}`;
+        } else {
+          return `${nums[2]}-${String(nums[0]).padStart(2, '0')}-${String(nums[1]).padStart(2, '0')}`;
+        }
+      }
+    }
+  } else if (typeof cell === 'number' && cell > 25569) {  // Excel serial date (post-1900)
+    const utc_days = Math.floor(cell - 25569);
+    const utc_value = utc_days * 86400;
+    const date_info = new Date(utc_value * 1000);
+    return `${date_info.getUTCFullYear()}-${String(date_info.getUTCMonth() + 1).padStart(2, '0')}-${String(date_info.getUTCDate()).padStart(2, '0')}`;
+  }
+
+  return null;  // Invalid
+}
+
+eventsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res, next) => {
+  try {
+    const { buffer } = req.file || {};
+    if (!buffer) return res.status(400).json({ error: 'No file uploaded' });
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const created = [];
+    const skipped = [];
+    for (const row of rows) {
+      const event_type = row['Event Type'] || null;
+      const event_name = row['Event Name'] || null;
+      const event_date_raw = row['Event Date'];
+      const event_date = parseExcelDate(event_date_raw);
+
+      // Skip if required fields missing/invalid
+      if (!event_type || !event_name || !event_date) {
+        skipped.push({
+          type: event_type,
+          name: event_name,
+          date: event_date_raw,
+          reason: !event_date ? 'Invalid date' : 'Missing type/name'
+        });
+        console.warn(`Skipping invalid row: ${event_type} - ${event_name} (${event_date_raw})`);
+        continue;
+      }
+
+      // Check for duplicate before create
+      const existing = await Event.findOne({
+        where: {
+          event_type,
+          event_name
+        }
+      });
+      if (existing) {
+        console.warn(`Skipping duplicate: ${event_type} - ${event_name}`);
+        continue;
+      }
+
+      const record = await Event.create({
+        event_type,
+        event_name,
+        event_date  // Now guaranteed YYYY-MM-DD or skipped
+      });
+      created.push(record);
+    }
+    const response = { inserted: created.length };
+    if (skipped.length > 0) {
+      response.skipped = skipped.length;
+      response.skip_details = skipped;  // Optional: for debugging
+    }
+    res.json(response);
+  } catch (e) {
+    if (e.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({ 
+        error: 'Duplicate event found', 
+        details: 'One or more records violate unique constraints on type/name' 
+      });
+    }
+    next(e);
+  }
+});
+`
+
+registration.routes.js
+
+`
+import { Router } from 'express';
+import multer from 'multer';
+import XLSX from 'xlsx';
+import { body, validationResult } from 'express-validator';
+import { Registration, Event } from '../../core/models.js';
+import { sequelize } from '../../core/db.js';
+import { requireAuth } from '../_shared/auth-middleware.js';
+
+const upload = multer({ storage: multer.memoryStorage() });
+export const registrationsRouter = Router();
+
+registrationsRouter.get('/', requireAuth, async (req, res, next) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 10, 
+      sort = 'reg_id', 
+      order = 'DESC', 
+      event_id,
+      employee_no,
+      employee_name,
+      department,
+      event_name
+    } = req.query;
+    const offset = (page - 1) * limit;
+    
+    const where = {};
+    if (event_id) where.event_id = event_id;
+    if (employee_no) where.employee_no = { [sequelize.Op.like]: `%${employee_no}%` };
+    if (employee_name) where.employee_name = { [sequelize.Op.like]: `%${employee_name}%` };
+    if (department) where.department = { [sequelize.Op.like]: `%${department}%` };
+    
+    const includeWhere = {};
+    if (event_name) includeWhere.event_name = { [sequelize.Op.like]: `%${event_name}%` };
+    
+    const { count, rows } = await Registration.findAndCountAll({
+      where,
+      include: [{
+        model: Event,
+        where: Object.keys(includeWhere).length > 0 ? includeWhere : undefined,
+        required: Object.keys(includeWhere).length > 0
+      }],
+      order: [[sort, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+    
+    res.json({
+      registrations: rows,
+      pagination: {
+        total: count,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(count / limit)
+      }
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+registrationsRouter.post(
+  '/',
+  requireAuth,
+  [
+    body('employee_no').optional().isString(),
+    body('employee_name').optional().isString(),
+    body('department').optional().isString(),
+    body('event_id').isInt(),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      
+      // Check for duplicate registration
+      const existingRegistration = await Registration.findOne({
+        where: {
+          employee_no: req.body.employee_no,
+          event_id: req.body.event_id
+        }
+      });
+      
+      if (existingRegistration) {
+        return res.status(409).json({ 
+          error: 'Duplicate registration found', 
+          details: `Employee ${req.body.employee_no || req.body.employee_name} is already registered for this event` 
+        });
+      }
+      
+      const created = await Registration.create(req.body);
+      res.status(201).json(created);
+    } catch (e) {
+      if (e.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ 
+          error: 'Duplicate registration found', 
+          details: 'This employee is already registered for this event' 
+        });
+      }
+      next(e);
+    }
+  }
+);
+
+registrationsRouter.put(
+  '/:id',
+  requireAuth,
+  [
+    body('employee_no').optional().isString(),
+    body('employee_name').optional().isString(),
+    body('department').optional().isString(),
+    body('event_id').isInt(),
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      const registration = await Registration.findByPk(req.params.id);
+      if (!registration) return res.status(404).json({ error: 'Registration not found' });
+      
+      // Check for duplicate registration (excluding current record)
+      const existingRegistration = await Registration.findOne({
+        where: {
+          employee_no: req.body.employee_no,
+          event_id: req.body.event_id,
+          reg_id: { [sequelize.Op.ne]: req.params.id }
+        }
+      });
+      
+      if (existingRegistration) {
+        return res.status(409).json({ 
+          error: 'Duplicate registration found', 
+          details: `Employee ${req.body.employee_no || req.body.employee_name} is already registered for this event` 
+        });
+      }
+      
+      await registration.update(req.body);
+      res.json(registration);
+    } catch (e) {
+      if (e.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ 
+          error: 'Duplicate registration found', 
+          details: 'This employee is already registered for this event' 
+        });
+      }
+      next(e);
+    }
+  }
+);
+
+registrationsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const registration = await Registration.findByPk(req.params.id);
+    if (!registration) return res.status(404).json({ error: 'Registration not found' });
+    await registration.destroy();
+    res.json({ message: 'Registration deleted successfully' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+registrationsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res, next) => {
+  try {
+    const { buffer } = req.file || {};
+    if (!buffer) return res.status(400).json({ error: 'No file uploaded' });
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const created = [];
+    for (const row of rows) {
+      const record = await Registration.create({
+        employee_no: row['Employee No'] || null,
+        employee_name: row['Employee Name'] || null,
+        department: row['Department'] || null,
+        event_id: Number(row['Event ID']),
+        status: row['Status'] || 'Registered',
+      });
+      created.push(record);
+    }
+    res.json({ inserted: created.length });
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+
+`
+
+reports.routes.js
+`
+import { Router } from 'express';
+import { Op, fn, col, literal } from 'sequelize';
+import { Attendance, Event, Registration, Dmag } from '../../core/models.js';
+import { requireAuth } from '../_shared/auth-middleware.js';
+
+export const reportsRouter = Router();
+
+reportsRouter.get('/event-summary/:eventId', requireAuth, async (req, res, next) => {
+  try {
+    const eventId = Number(req.params.eventId);
+    const total = await Attendance.count({ where: { event_id: eventId } });
+    const virtual = await Attendance.count({ where: { event_id: eventId, mode_of_attendance: 'Virtual' } });
+    const onsite = await Attendance.count({ where: { event_id: eventId, mode_of_attendance: 'Onsite' } });
+    const registered = await Attendance.count({ where: { event_id: eventId, validation_status: 'Registered' } });
+    const walkIns = await Attendance.count({ where: { event_id: eventId, validation_status: 'Not Registered' } });
+    res.json({ total, virtual, onsite, registered, walkIns });
+  } catch (e) {
+    next(e);
+  }
+});
+
+reportsRouter.get('/overall', requireAuth, async (_req, res, next) => {
+  try {
+    const topEmployees = await Attendance.findAll({
+      attributes: ['employee_no', 'employee_name', [fn('COUNT', col('attendance_id')), 'count']],
+      group: ['employee_no', 'employee_name'],
+      order: [[literal('count'), 'DESC']],
+      limit: 10,
+    });
+
+    const topDepartments = await Attendance.findAll({
+      attributes: ['department', [fn('COUNT', col('attendance_id')), 'count']],
+      group: ['department'],
+      order: [[literal('count'), 'DESC']],
+      limit: 10,
+    });
+
+    const genderBreakdown = await Attendance.findAll({
+      attributes: ['department'], // placeholder to keep query valid
+      limit: 0,
+    });
+    // Gender requires a join with DMAG; keeping minimal due to sqlite demo.
+
+    res.json({ topEmployees, topDepartments });
+  } catch (e) {
+    next(e);
+  }
+});
+
+
+
+`
+
+cleanup-duplicates.js
+`
+import { sequelize } from '../core/db.js';
+import { Registration, Attendance, Event } from '../core/models.js';
+
+export async function cleanupDuplicates() {
+  try {
+    console.log('Starting duplicate cleanup...');
+    
+    // Clean up duplicate registrations
+    console.log('Cleaning up duplicate registrations...');
+    const duplicateRegistrations = await sequelize.query(`
+      SELECT employee_no, event_id, COUNT(*) as count
+      FROM registrations 
+      WHERE employee_no IS NOT NULL
+      GROUP BY employee_no, event_id 
+      HAVING COUNT(*) > 1
+    `, { type: sequelize.QueryTypes.SELECT });
+
+    for (const duplicate of duplicateRegistrations) {
+      console.log(`Found ${duplicate.count} duplicates for employee ${duplicate.employee_no} in event ${duplicate.event_id}`);
+      
+      // Keep only the first record, delete the rest
+      const records = await Registration.findAll({
+        where: {
+          employee_no: duplicate.employee_no,
+          event_id: duplicate.event_id
+        },
+        order: [['reg_id', 'ASC']]
+      });
+      
+      // Delete all but the first record
+      for (let i = 1; i < records.length; i++) {
+        await records[i].destroy();
+        console.log(`Deleted duplicate registration ID: ${records[i].reg_id}`);
+      }
+    }
+
+    // Clean up duplicate attendance
+    console.log('Cleaning up duplicate attendance...');
+    const duplicateAttendance = await sequelize.query(`
+      SELECT employee_no, event_id, COUNT(*) as count
+      FROM attendance 
+      WHERE employee_no IS NOT NULL
+      GROUP BY employee_no, event_id 
+      HAVING COUNT(*) > 1
+    `, { type: sequelize.QueryTypes.SELECT });
+
+    for (const duplicate of duplicateAttendance) {
+      console.log(`Found ${duplicate.count} duplicates for employee ${duplicate.employee_no} in event ${duplicate.event_id}`);
+      
+      // Keep only the first record, delete the rest
+      const records = await Attendance.findAll({
+        where: {
+          employee_no: duplicate.employee_no,
+          event_id: duplicate.event_id
+        },
+        order: [['attendance_id', 'ASC']]
+      });
+      
+      // Delete all but the first record
+      for (let i = 1; i < records.length; i++) {
+        await records[i].destroy();
+        console.log(`Deleted duplicate attendance ID: ${records[i].attendance_id}`);
+      }
+    }
+
+    console.log('Duplicate cleanup completed successfully!');
+    
+    // Now add the unique constraints
+    console.log('Adding unique constraints...');
+    
+    try {
+      await sequelize.query(`
+        ALTER TABLE registrations 
+        ADD UNIQUE INDEX registrations_employee_no_event_id (employee_no, event_id)
+      `);
+      console.log('Added unique constraint for registrations');
+    } catch (error) {
+      if (error.code === 'ER_DUP_KEYNAME') {
+        console.log('Unique constraint for registrations already exists');
+      } else {
+        throw error;
+      }
+    }
+
+    try {
+      await sequelize.query(`
+        ALTER TABLE attendance 
+        ADD UNIQUE INDEX attendance_employee_no_event_id (employee_no, event_id)
+      `);
+      console.log('Added unique constraint for attendance');
+    } catch (error) {
+      if (error.code === 'ER_DUP_KEYNAME') {
+        console.log('Unique constraint for attendance already exists');
+      } else {
+        throw error;
+      }
+    }
+
+    try {
+      await sequelize.query(`
+        ALTER TABLE events 
+        ADD UNIQUE INDEX events_type_name (event_type, event_name)
+      `);
+      console.log('Added unique constraint for events');
+    } catch (error) {
+      if (error.code === 'ER_DUP_KEYNAME') {
+        console.log('Unique constraint for events already exists');
+      } else {
+        throw error;
+      }
+    }
+
+    console.log('All unique constraints added successfully!');
+    
+  } catch (error) {
+    console.error('Error during cleanup:', error);
+    throw error;
+  }
+}
+
+// Run cleanup if this file is executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  cleanupDuplicates()
+    .then(() => {
+      console.log('Migration completed successfully');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('Migration failed:', error);
+      process.exit(1);
+    });
+}
+
+`
