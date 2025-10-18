@@ -11,7 +11,14 @@ const upload = multer({ storage: multer.memoryStorage() });
 export const attendanceRouter = Router();
 
 async function computeValidationStatus(employeeNo, eventId) {
-  const match = await Registration.findOne({ where: { employee_no: employeeNo, event_id: eventId } });
+  if (!employeeNo) return 'Not Registered'; // NULL employee_no can't be registered
+  const employeeNoStr = String(employeeNo); // Explicitly cast to string
+  const match = await Registration.findOne({ 
+    where: { 
+      employee_no: employeeNoStr, 
+      event_id: eventId 
+    } 
+  });
   return match ? 'Registered' : 'Not Registered';
 }
 
@@ -70,43 +77,54 @@ attendanceRouter.post(
   '/',
   requireAuth,
   [
-    body('employee_no').optional().isString(),
-    body('employee_name').optional().isString(),
-    body('department').optional().isString(),
-    body('mode_of_attendance').isIn(['Virtual', 'Onsite']),
-    body('event_id').isInt(),
+    body('employee_no').optional().isString().trim(),
+    body('employee_name').optional().isString().trim(),
+    body('department').optional().isString().trim(),
+    body('mode_of_attendance').isIn(['Virtual', 'Onsite']).withMessage('Mode must be Virtual or Onsite'),
+    body('event_name').isString().notEmpty().trim().withMessage('Event Name is required'),
   ],
   async (req, res, next) => {
     try {
       const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      if (!errors.isEmpty()) {
+        console.error('POST /attendance validation errors:', errors.array());
+        return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      }
       
-      // Check for duplicate attendance
+      const { event_name, employee_no, ...rest } = req.body;
+      const event = await Event.findOne({ where: { event_name: { [Op.iLike]: event_name } } });
+      if (!event) {
+        console.error(`POST /attendance: Event "${event_name}" not found`);
+        return res.status(404).json({ error: `Event "${event_name}" not found` });
+      }
+      
+      const finalEmployeeNo = employee_no === '' || employee_no === undefined ? null : employee_no;
+
       const existingAttendance = await Attendance.findOne({
         where: {
-          employee_no: req.body.employee_no,
-          event_id: req.body.event_id
+          employee_no: finalEmployeeNo,
+          event_id: event.event_id
         }
       });
       
       if (existingAttendance) {
+        console.warn(`POST /attendance: Duplicate found for employee ${finalEmployeeNo || 'NULL'} in event ${event_name}`);
         return res.status(409).json({ 
           error: 'Duplicate attendance found', 
-          details: `Employee ${req.body.employee_no || req.body.employee_name} already has attendance recorded for this event` 
+          details: `Employee ${finalEmployeeNo || rest.employee_name || 'unknown'} already has attendance for "${event_name}"` 
         });
       }
       
-      const { employee_no, event_id } = req.body;
-      const validation_status = await computeValidationStatus(employee_no, event_id);
-      const created = await Attendance.create({ ...req.body, validation_status });
+      const validation_status = await computeValidationStatus(finalEmployeeNo, event.event_id);
+      const created = await Attendance.create({ 
+        ...rest, 
+        employee_no: finalEmployeeNo, 
+        event_id: event.event_id, 
+        validation_status 
+      });
       res.status(201).json(created);
     } catch (e) {
-      if (e.name === 'SequelizeUniqueConstraintError') {
-        return res.status(409).json({ 
-          error: 'Duplicate attendance found', 
-          details: 'This employee already has attendance recorded for this event' 
-        });
-      }
+      console.error('POST /attendance error:', e);
       next(e);
     }
   }
@@ -120,17 +138,44 @@ attendanceRouter.put(
     body('employee_name').optional().isString(),
     body('department').optional().isString(),
     body('mode_of_attendance').isIn(['Virtual', 'Onsite']),
-    body('event_id').isInt(),
+    body('event_name').optional().isString(),
   ],
   async (req, res, next) => {
     try {
       const errors = validationResult(req);
-      if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
       const attendance = await Attendance.findByPk(req.params.id);
       if (!attendance) return res.status(404).json({ error: 'Attendance record not found' });
-      const { employee_no, event_id } = req.body;
-      const validation_status = await computeValidationStatus(employee_no, event_id);
-      await attendance.update({ ...req.body, validation_status });
+      
+      const { event_name, employee_no, ...rest } = req.body;
+      let event_id = attendance.event_id;
+      if (event_name) {
+        const event = await Event.findOne({ where: { event_name } });
+        if (!event) return res.status(404).json({ error: 'Event not found' });
+        event_id = event.event_id;
+      }
+      
+      // Handle empty employee_no
+      const finalEmployeeNo = employee_no === '' ? null : employee_no;
+
+      // Check for duplicate (excluding current)
+      const existingAttendance = await Attendance.findOne({
+        where: {
+          employee_no: finalEmployeeNo,
+          event_id,
+          attendance_id: { [Op.ne]: req.params.id }
+        }
+      });
+      
+      if (existingAttendance) {
+        return res.status(409).json({ 
+          error: 'Duplicate attendance found', 
+          details: `Employee ${finalEmployeeNo || rest.employee_name} already has attendance recorded for this event` 
+        });
+      }
+      
+      const validation_status = await computeValidationStatus(finalEmployeeNo, event_id);
+      await attendance.update({ ...rest, employee_no: finalEmployeeNo, event_id, validation_status });
       res.json(attendance);
     } catch (e) {
       next(e);
@@ -152,27 +197,70 @@ attendanceRouter.delete('/:id', requireAuth, async (req, res, next) => {
 attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req, res, next) => {
   try {
     const { buffer } = req.file || {};
-    if (!buffer) return res.status(400).json({ error: 'No file uploaded' });
+    if (!buffer) {
+      console.error('POST /attendance/upload: No file uploaded');
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-    let inserted = 0;
+    const created = [];
+    const skipped = [];
+    
+    const seen = new Map();
+    
     for (const row of rows) {
-      const eventId = Number(row['Event ID']);
-      const employeeNo = row['Employee No'] || null;
-      const validation_status = await computeValidationStatus(employeeNo, eventId);
-      await Attendance.create({
-        employee_no: employeeNo,
+      const employee_no = row['Employee No'] === '' ? null : String(row['Employee No']); // Cast to string
+      const event_name = row['Event Name'];
+      const mode_of_attendance = row['Mode of Attendance'] || 'Virtual';
+      
+      if (!event_name) {
+        skipped.push({ ...row, reason: 'Missing Event Name' });
+        console.warn('Skipping row: Missing Event Name');
+        continue;
+      }
+      if (!['Virtual', 'Onsite'].includes(mode_of_attendance)) {
+        skipped.push({ ...row, reason: `Invalid Mode of Attendance "${mode_of_attendance}"` });
+        console.warn(`Skipping row: Invalid Mode of Attendance "${mode_of_attendance}"`);
+        continue;
+      }
+      
+      const event = await Event.findOne({ where: { event_name: { [Op.iLike]: event_name } } });
+      if (!event) {
+        skipped.push({ ...row, reason: `Event "${event_name}" not found` });
+        console.warn(`Skipping row: Event "${event_name}" not found`);
+        continue;
+      }
+      
+      const key = `${employee_no || 'NULL'}_${event.event_id}`;
+      if (seen.has(key)) {
+        skipped.push({ ...row, reason: `Duplicate employee ${employee_no || 'NULL'} for event ${event_name}` });
+        console.warn(`Skipping duplicate: ${key}`);
+        continue;
+      }
+      seen.set(key, true);
+      
+      const validation_status = await computeValidationStatus(employee_no, event.event_id);
+      const record = await Attendance.create({
+        employee_no,
         employee_name: row['Employee Name'] || null,
         department: row['Department'] || null,
-        mode_of_attendance: row['Mode of Attendance'] || 'Virtual',
-        event_id: eventId,
+        mode_of_attendance,
+        event_id: event.event_id,
         validation_status,
       });
-      inserted += 1;
+      created.push(record);
     }
-    res.json({ inserted });
+    
+    const response = { inserted: created.length };
+    if (skipped.length > 0) {
+      response.skipped = skipped.length;
+      response.skip_details = skipped; // For debugging
+      console.log('POST /attendance/upload: Skipped rows:', skipped);
+    }
+    res.json(response);
   } catch (e) {
+    console.error('POST /attendance/upload error:', e);
     next(e);
   }
 });

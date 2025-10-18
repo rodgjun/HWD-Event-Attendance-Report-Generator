@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../services/api';
 
-type Registration = { 
+type RegistrationRow = { 
   reg_id: number; 
   employee_no: string | null; 
   employee_name: string | null; 
@@ -11,18 +11,17 @@ type Registration = {
 };
 
 export function Registrations() {
-  const [rows, setRows] = useState<Registration[]>([]);
-  const [editingRegistration, setEditingRegistration] = useState<Registration | null>(null);
-  const [form, setForm] = useState({ employee_no: '', employee_name: '', department: '', event_id: '' });
+  const [rows, setRows] = useState<RegistrationRow[]>([]);
+  const [form, setForm] = useState({ employee_no: '', employee_name: '', department: '', event_name: '' });
+  const [editingRegistration, setEditingRegistration] = useState<RegistrationRow | null>(null);
   
   // Pagination and filtering state
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
   const [filters, setFilters] = useState({ 
-    event_id: '', 
+    event_name: '', 
     employee_no: '', 
     employee_name: '', 
-    department: '', 
-    event_name: '' 
+    department: ''
   });
   const [sorting, setSorting] = useState({ sort: 'reg_id', order: 'DESC' });
 
@@ -33,11 +32,10 @@ export function Registrations() {
         limit: pagination.limit.toString(),
         sort: sorting.sort,
         order: sorting.order,
-        ...(filters.event_id && { event_id: filters.event_id }),
+        ...(filters.event_name && { event_name: filters.event_name }),
         ...(filters.employee_no && { employee_no: filters.employee_no }),
         ...(filters.employee_name && { employee_name: filters.employee_name }),
-        ...(filters.department && { department: filters.department }),
-        ...(filters.event_name && { event_name: filters.event_name })
+        ...(filters.department && { department: filters.department })
       });
       
       const res = await api.get(`/registrations?${params}`);
@@ -48,7 +46,7 @@ export function Registrations() {
     }
   }
   
-  useEffect(() => { load(); }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_id, filters.employee_no, filters.employee_name, filters.department, filters.event_name]);
+  useEffect(() => { load(); }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
 
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -61,10 +59,10 @@ export function Registrations() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { ...form, event_id: Number(form.event_id) } as any;
+    const payload = { ...form, employee_no: form.employee_no === '' ? null : form.employee_no };
     try {
       await api.post('/registrations', payload);
-      setForm({ employee_no: '', employee_name: '', department: '', event_id: '' });
+      setForm({ employee_no: '', employee_name: '', department: '', event_name: '' });
       await load();
     } catch (e: any) {
       console.error('Failed to create registration:', e);
@@ -74,11 +72,11 @@ export function Registrations() {
   async function updateRegistration(e: React.FormEvent) {
     e.preventDefault();
     if (!editingRegistration) return;
-    const payload = { ...form, event_id: Number(form.event_id) } as any;
+    const payload = { ...form, employee_no: form.employee_no === '' ? null : form.employee_no };
     try {
       await api.put(`/registrations/${editingRegistration.reg_id}`, payload);
       setEditingRegistration(null);
-      setForm({ employee_no: '', employee_name: '', department: '', event_id: '' });
+      setForm({ employee_no: '', employee_name: '', department: '', event_name: '' });
       await load();
     } catch (e: any) {
       console.error('Failed to update registration:', e);
@@ -95,19 +93,19 @@ export function Registrations() {
     }
   }
 
-  function startEdit(registration: Registration) {
+  function startEdit(registration: RegistrationRow) {
     setEditingRegistration(registration);
     setForm({
       employee_no: registration.employee_no || '',
       employee_name: registration.employee_name || '',
       department: registration.department || '',
-      event_id: registration.event_id.toString()
+      event_name: registration.event?.event_name || ''
     });
   }
 
   function cancelEdit() {
     setEditingRegistration(null);
-    setForm({ employee_no: '', employee_name: '', department: '', event_id: '' });
+    setForm({ employee_no: '', employee_name: '', department: '', event_name: '' });
   }
 
   function handleSort(field: string) {
@@ -122,14 +120,14 @@ export function Registrations() {
       {/* Filters */}
       <div className="bg-gray-50 p-4 rounded-lg">
         <h3 className="text-lg font-medium mb-3">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Event ID</label>
+            <label className="block text-sm font-medium mb-1">Event Name</label>
             <input 
               className="border p-2 w-full rounded" 
-              placeholder="Filter by Event ID" 
-              value={filters.event_id} 
-              onChange={e => setFilters({ ...filters, event_id: e.target.value })} 
+              placeholder="Filter by Event Name" 
+              value={filters.event_name} 
+              onChange={e => setFilters({ ...filters, event_name: e.target.value })} 
             />
           </div>
           <div>
@@ -159,15 +157,6 @@ export function Registrations() {
               onChange={e => setFilters({ ...filters, department: e.target.value })} 
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Event Name" 
-              value={filters.event_name} 
-              onChange={e => setFilters({ ...filters, event_name: e.target.value })} 
-            />
-          </div>
         </div>
       </div>
       
@@ -179,10 +168,10 @@ export function Registrations() {
       
       {/* Add/Edit Form */}
       <form onSubmit={editingRegistration ? updateRegistration : submit} className="grid grid-cols-4 gap-3 items-end">
-        <input className="border p-2 rounded" placeholder="Employee No" value={form.employee_no} onChange={e => setForm({ ...form, employee_no: e.target.value })} />
+        <input className="border p-2 rounded" placeholder="Employee No (optional)" value={form.employee_no} onChange={e => setForm({ ...form, employee_no: e.target.value })} />
         <input className="border p-2 rounded" placeholder="Employee Name" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} />
         <input className="border p-2 rounded" placeholder="Department" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} />
-        <input className="border p-2 rounded" placeholder="Event ID" value={form.event_id} onChange={e => setForm({ ...form, event_id: e.target.value })} />
+        <input className="border p-2 rounded" placeholder="Event Name" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} />
         <div className="flex gap-2 col-span-4">
           <button className="bg-blue-600 text-white px-4 py-2 rounded">
             {editingRegistration ? 'Update' : 'Add'}
@@ -220,7 +209,7 @@ export function Registrations() {
             {rows.map(r => (
               <tr key={r.reg_id}>
                 <td className="p-2 border">{r.reg_id}</td>
-                <td className="p-2 border">{r.employee_no}</td>
+                <td className="p-2 border">{r.employee_no || 'N/A'}</td>
                 <td className="p-2 border">{r.employee_name}</td>
                 <td className="p-2 border">{r.department}</td>
                 <td className="p-2 border">{r.event?.event_name || 'N/A'}</td>
@@ -274,5 +263,3 @@ export function Registrations() {
     </div>
   );
 }
-
-

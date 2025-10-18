@@ -5,6 +5,7 @@ import { body, validationResult } from 'express-validator';
 import { sequelize } from '../../core/db.js';
 import { Event } from '../../core/models.js';
 import { requireAuth } from '../_shared/auth-middleware.js';
+import { Op } from 'sequelize';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const eventsRouter = Router();
@@ -23,9 +24,9 @@ eventsRouter.get('/', requireAuth, async (req, res, next) => {
     const offset = (page - 1) * limit;
     
     const where = {};
-    if (type) where.event_type = { [sequelize.Op.like]: `%${type}%` };
-    if (name) where.event_name = { [sequelize.Op.like]: `%${name}%` };
-    if (date) where.event_date = { [sequelize.Op.eq]: date };
+    if (type) where.event_type = { [Op.like]: `%${type}%` };
+    if (name) where.event_name = { [Op.like]: `%${name}%` };
+    if (date) where.event_date = { [Op.eq]: date };
     
     const { count, rows } = await Event.findAndCountAll({
       where,
@@ -53,8 +54,8 @@ eventsRouter.get('/search', requireAuth, async (req, res, next) => {
   try {
     const { type, name } = req.query;
     const where = {};
-    if (type) where.event_type = { [sequelize.Op.like]: `%${type}%` };
-    if (name) where.event_name = { [sequelize.Op.like]: `%${name}%` };
+    if (type) where.event_type = { [Op.like]: `%${type}%` };
+    if (name) where.event_name = { [Op.like]: `%${name}%` };
     const events = await Event.findAll({ where, order: [['event_name', 'ASC']], raw: true });
     res.json(events.map(e => ({ id: e.event_id, label: `${e.event_type}: ${e.event_name}` })));
   } catch (e) {
@@ -125,7 +126,7 @@ eventsRouter.put(
         where: {
           event_type: req.body.event_type || event.event_type,
           event_name: req.body.event_name || event.event_name,
-          event_id: { [sequelize.Op.ne]: req.params.id }
+          event_id: { [Op.ne]: req.params.id }
         }
       });
       

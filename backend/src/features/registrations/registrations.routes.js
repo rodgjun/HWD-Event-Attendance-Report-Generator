@@ -67,37 +67,42 @@ registrationsRouter.post(
     body('employee_no').optional().isString(),
     body('employee_name').optional().isString(),
     body('department').optional().isString(),
-    body('event_id').isInt(),
+    body('event_name').isString().notEmpty(),
   ],
   async (req, res, next) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
       
-      // Check for duplicate registration
+      const { event_name, employee_no, ...rest } = req.body;
+      const event = await Event.findOne({ where: { event_name } });
+      if (!event) return res.status(404).json({ error: 'Event not found' });
+      
+      // Handle empty employee_no
+      const finalEmployeeNo = employee_no === '' ? null : employee_no;
+
+      // Check for duplicate
       const existingRegistration = await Registration.findOne({
         where: {
-          employee_no: req.body.employee_no,
-          event_id: req.body.event_id
+          employee_no: finalEmployeeNo,
+          event_id: event.event_id
         }
       });
       
       if (existingRegistration) {
         return res.status(409).json({ 
           error: 'Duplicate registration found', 
-          details: `Employee ${req.body.employee_no || req.body.employee_name} is already registered for this event` 
+          details: `Employee ${finalEmployeeNo || rest.employee_name} is already registered for this event` 
         });
       }
       
-      const created = await Registration.create(req.body);
+      const created = await Registration.create({
+        ...rest,
+        employee_no: finalEmployeeNo,
+        event_id: event.event_id
+      });
       res.status(201).json(created);
     } catch (e) {
-      if (e.name === 'SequelizeUniqueConstraintError') {
-        return res.status(409).json({ 
-          error: 'Duplicate registration found', 
-          details: 'This employee is already registered for this event' 
-        });
-      }
       next(e);
     }
   }
@@ -110,7 +115,7 @@ registrationsRouter.put(
     body('employee_no').optional().isString(),
     body('employee_name').optional().isString(),
     body('department').optional().isString(),
-    body('event_id').isInt(),
+    body('event_name').optional().isString(),
   ],
   async (req, res, next) => {
     try {
@@ -119,11 +124,22 @@ registrationsRouter.put(
       const registration = await Registration.findByPk(req.params.id);
       if (!registration) return res.status(404).json({ error: 'Registration not found' });
       
-      // Check for duplicate registration (excluding current record)
+      const { event_name, employee_no, ...rest } = req.body;
+      let event_id = registration.event_id;
+      if (event_name) {
+        const event = await Event.findOne({ where: { event_name } });
+        if (!event) return res.status(404).json({ error: 'Event not found' });
+        event_id = event.event_id;
+      }
+      
+      // Handle empty employee_no
+      const finalEmployeeNo = employee_no === '' ? null : employee_no;
+
+      // Check for duplicate (excluding current)
       const existingRegistration = await Registration.findOne({
         where: {
-          employee_no: req.body.employee_no,
-          event_id: req.body.event_id,
+          employee_no: finalEmployeeNo,
+          event_id,
           reg_id: { [sequelize.Op.ne]: req.params.id }
         }
       });
@@ -131,19 +147,13 @@ registrationsRouter.put(
       if (existingRegistration) {
         return res.status(409).json({ 
           error: 'Duplicate registration found', 
-          details: `Employee ${req.body.employee_no || req.body.employee_name} is already registered for this event` 
+          details: `Employee ${finalEmployeeNo || rest.employee_name} is already registered for this event` 
         });
       }
       
-      await registration.update(req.body);
+      await registration.update({ ...rest, employee_no: finalEmployeeNo, event_id });
       res.json(registration);
     } catch (e) {
-      if (e.name === 'SequelizeUniqueConstraintError') {
-        return res.status(409).json({ 
-          error: 'Duplicate registration found', 
-          details: 'This employee is already registered for this event' 
-        });
-      }
       next(e);
     }
   }
@@ -168,17 +178,44 @@ registrationsRouter.post('/upload', requireAuth, upload.single('file'), async (r
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
     const created = [];
+    const skipped = [];
+    
+    // Track unique employee_no/event_id pairs to keep first occurrence
+    const seen = new Map();
+    
     for (const row of rows) {
+      const employee_no = row['Employee No'] === '' ? null : row['Employee No'];
+      const event_name = row['Event Name'];
+      const event = await Event.findOne({ where: { event_name } });
+      if (!event) {
+        skipped.push({ ...row, reason: `Event "${event_name}" not found` });
+        console.warn(`Skipping row: Event "${event_name}" not found`);
+        continue;
+      }
+      
+      const key = `${employee_no || 'NULL'}_${event.event_id}`;
+      if (seen.has(key)) {
+        skipped.push({ ...row, reason: `Duplicate employee ${employee_no || 'NULL'} for event ${event_name}` });
+        console.warn(`Skipping duplicate: ${key}`);
+        continue;
+      }
+      seen.set(key, true);
+      
       const record = await Registration.create({
-        employee_no: row['Employee No'] || null,
+        employee_no,
         employee_name: row['Employee Name'] || null,
         department: row['Department'] || null,
-        event_id: Number(row['Event ID']),
-        status: row['Status'] || 'Registered',
+        event_id: event.event_id,
       });
       created.push(record);
     }
-    res.json({ inserted: created.length });
+    
+    const response = { inserted: created.length };
+    if (skipped.length > 0) {
+      response.skipped = skipped.length;
+      response.skip_details = skipped; // For debugging
+    }
+    res.json(response);
   } catch (e) {
     next(e);
   }

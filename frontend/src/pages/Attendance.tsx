@@ -14,17 +14,16 @@ type AttendanceRow = {
 
 export function Attendance() {
   const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [form, setForm] = useState({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_id: '' });
+  const [form, setForm] = useState({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
   const [editingAttendance, setEditingAttendance] = useState<AttendanceRow | null>(null);
   
   // Pagination and filtering state
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
   const [filters, setFilters] = useState({ 
-    event_id: '', 
+    event_name: '', 
     employee_no: '', 
     employee_name: '', 
-    department: '', 
-    event_name: '' 
+    department: ''
   });
   const [sorting, setSorting] = useState({ sort: 'attendance_id', order: 'DESC' });
 
@@ -35,11 +34,10 @@ export function Attendance() {
         limit: pagination.limit.toString(),
         sort: sorting.sort,
         order: sorting.order,
-        ...(filters.event_id && { event_id: filters.event_id }),
+        ...(filters.event_name && { event_name: filters.event_name }),
         ...(filters.employee_no && { employee_no: filters.employee_no }),
         ...(filters.employee_name && { employee_name: filters.employee_name }),
-        ...(filters.department && { department: filters.department }),
-        ...(filters.event_name && { event_name: filters.event_name })
+        ...(filters.department && { department: filters.department })
       });
       
       const res = await api.get(`/attendance?${params}`);
@@ -50,7 +48,7 @@ export function Attendance() {
     }
   }
   
-  useEffect(() => { load(); }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_id, filters.employee_no, filters.employee_name, filters.department, filters.event_name]);
+  useEffect(() => { load(); }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
 
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -63,10 +61,10 @@ export function Attendance() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { ...form, event_id: Number(form.event_id) } as any;
+    const payload = { ...form, employee_no: form.employee_no === '' ? null : form.employee_no };
     try {
       await api.post('/attendance', payload);
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_id: '' });
+      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
       await load();
     } catch (e: any) {
       console.error('Failed to create attendance:', e);
@@ -76,11 +74,11 @@ export function Attendance() {
   async function updateAttendance(e: React.FormEvent) {
     e.preventDefault();
     if (!editingAttendance) return;
-    const payload = { ...form, event_id: Number(form.event_id) } as any;
+    const payload = { ...form, employee_no: form.employee_no === '' ? null : form.employee_no };
     try {
       await api.put(`/attendance/${editingAttendance.attendance_id}`, payload);
       setEditingAttendance(null);
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_id: '' });
+      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
       await load();
     } catch (e: any) {
       console.error('Failed to update attendance:', e);
@@ -104,13 +102,13 @@ export function Attendance() {
       employee_name: attendance.employee_name || '',
       department: attendance.department || '',
       mode_of_attendance: attendance.mode_of_attendance,
-      event_id: attendance.event_id.toString()
+      event_name: attendance.event?.event_name || ''
     });
   }
 
   function cancelEdit() {
     setEditingAttendance(null);
-    setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_id: '' });
+    setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
   }
 
   function handleSort(field: string) {
@@ -125,14 +123,14 @@ export function Attendance() {
       {/* Filters */}
       <div className="bg-gray-50 p-4 rounded-lg">
         <h3 className="text-lg font-medium mb-3">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Event ID</label>
+            <label className="block text-sm font-medium mb-1">Event Name</label>
             <input 
               className="border p-2 w-full rounded" 
-              placeholder="Filter by Event ID" 
-              value={filters.event_id} 
-              onChange={e => setFilters({ ...filters, event_id: e.target.value })} 
+              placeholder="Filter by Event Name" 
+              value={filters.event_name} 
+              onChange={e => setFilters({ ...filters, event_name: e.target.value })} 
             />
           </div>
           <div>
@@ -162,15 +160,6 @@ export function Attendance() {
               onChange={e => setFilters({ ...filters, department: e.target.value })} 
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Event Name" 
-              value={filters.event_name} 
-              onChange={e => setFilters({ ...filters, event_name: e.target.value })} 
-            />
-          </div>
         </div>
       </div>
       
@@ -189,7 +178,7 @@ export function Attendance() {
           <option>Onsite</option>
           <option>Virtual</option>
         </select>
-        <input className="border p-2 rounded" placeholder="Event ID" value={form.event_id} onChange={e => setForm({ ...form, event_id: e.target.value })} />
+        <input className="border p-2 rounded" placeholder="Event Name" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} />
         <div className="flex gap-2 col-span-5">
           <button className="bg-blue-600 text-white px-4 py-2 rounded">
             {editingAttendance ? 'Update' : 'Add'} Attendance
@@ -223,7 +212,9 @@ export function Attendance() {
               <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('mode_of_attendance')}>
                 Mode {sorting.sort === 'mode_of_attendance' && (sorting.order === 'ASC' ? '↑' : '↓')}
               </th>
-              <th className="p-2 border">Validation</th>
+              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('validation_status')}>
+                Status {sorting.sort === 'validation_status' && (sorting.order === 'ASC' ? '↑' : '↓')}
+              </th>
               <th className="p-2 border">Actions</th>
             </tr>
           </thead>
@@ -231,7 +222,7 @@ export function Attendance() {
             {rows.map(r => (
               <tr key={r.attendance_id}>
                 <td className="p-2 border">{r.attendance_id}</td>
-                <td className="p-2 border">{r.employee_no}</td>
+                <td className="p-2 border">{r.employee_no || 'N/A'}</td>
                 <td className="p-2 border">{r.employee_name}</td>
                 <td className="p-2 border">{r.department}</td>
                 <td className="p-2 border">{r.event?.event_name || 'N/A'}</td>
@@ -262,7 +253,7 @@ export function Attendance() {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} attendance records
+          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} attendance
         </div>
         <div className="flex gap-2">
           <button
@@ -287,5 +278,3 @@ export function Attendance() {
     </div>
   );
 }
-
-

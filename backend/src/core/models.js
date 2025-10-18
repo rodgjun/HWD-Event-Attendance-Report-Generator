@@ -31,7 +31,7 @@ export const Event = sequelize.define('event', {
 
 export const Registration = sequelize.define('registration', {
   reg_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-  employee_no: { type: DataTypes.STRING },
+  employee_no: { type: DataTypes.STRING, allowNull: true }, // Allow NULL
   employee_name: { type: DataTypes.STRING },
   department: { type: DataTypes.STRING },
   event_id: { type: DataTypes.INTEGER, allowNull: false },
@@ -39,7 +39,7 @@ export const Registration = sequelize.define('registration', {
 
 export const Attendance = sequelize.define('attendance', {
   attendance_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-  employee_no: { type: DataTypes.STRING },
+  employee_no: { type: DataTypes.STRING, allowNull: true }, // Allow NULL
   employee_name: { type: DataTypes.STRING },
   department: { type: DataTypes.STRING },
   mode_of_attendance: { type: DataTypes.ENUM('Virtual', 'Onsite'), allowNull: false },
