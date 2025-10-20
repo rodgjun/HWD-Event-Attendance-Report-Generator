@@ -7,253 +7,202 @@ export function Events() {
   const [events, setEvents] = useState<Event[]>([]);
   const [form, setForm] = useState({ event_type: '', event_name: '', event_date: '' });
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  
-  // Pagination and filtering state
-  const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [filters, setFilters] = useState({ type: '', name: '', date: '' });
-  const [sorting, setSorting] = useState({ sort: 'event_date', order: 'DESC' });
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false); // Toggle for manual add/edit
 
-  async function load() {
-    setLoading(true);
-    setError('');
+  useEffect(() => {
+    loadEvents();
+  }, []);
+
+  async function loadEvents() {
     try {
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        limit: pagination.limit.toString(),
-        sort: sorting.sort,
-        order: sorting.order,
-        ...(filters.type && { type: filters.type }),
-        ...(filters.name && { name: filters.name }),
-        ...(filters.date && { date: filters.date })
-      });
-      
-      const res = await api.get(`/events?${params}`);
-      setEvents(res.data.events);
-      setPagination(res.data.pagination);
+      const res = await api.get('/events');
+      setEvents(res.data.events || []);
+      setError(null);
     } catch (e: any) {
-      const status = e?.response?.status;
-      if (status === 401) setError('Unauthorized. Please login first.');
-      else setError(e?.response?.data?.error || 'Failed to load events. Check API URL and server.');
-      setEvents([]);
+      setError('Failed to load events');
+    }
+  }
+
+  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    setLoading(true);
+    setError(null);
+    try {
+      await api.post('/events/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      e.target.value = ''; // Reset file input
+      loadEvents();
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to upload file');
     } finally {
       setLoading(false);
     }
   }
-  
-  useEffect(() => { load(); }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.type, filters.name, filters.date]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.event_type || !form.event_name || !form.event_date) return;
     try {
-      await api.post('/events', form);
+      setError(null);
+      const payload = { ...form, event_date: form.event_date || new Date().toISOString().split('T')[0] };
+      if (editingEvent) {
+        await api.put(`/events/${editingEvent.event_id}`, payload);
+      } else {
+        await api.post('/events', payload);
+      }
       setForm({ event_type: '', event_name: '', event_date: '' });
-      await load();
-    } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to create event');
-    }
-  }
-
-  async function updateEvent(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingEvent || !form.event_type || !form.event_name || !form.event_date) return;
-    try {
-      await api.put(`/events/${editingEvent.event_id}`, form);
       setEditingEvent(null);
-      setForm({ event_type: '', event_name: '', event_date: '' });
-      await load();
+      setShowForm(false);
+      loadEvents();
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to update event');
-    }
-  }
-
-  async function deleteEvent(id: number) {
-    if (!confirm('Are you sure you want to delete this event?')) return;
-    try {
-      await api.delete(`/events/${id}`);
-      await load();
-    } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to delete event');
+      setError(e.response?.data?.error || 'Failed to save event');
     }
   }
 
   function startEdit(event: Event) {
     setEditingEvent(event);
     setForm({ event_type: event.event_type, event_name: event.event_name, event_date: event.event_date });
+    setShowForm(true);
   }
 
   function cancelEdit() {
     setEditingEvent(null);
     setForm({ event_type: '', event_name: '', event_date: '' });
+    setShowForm(false);
   }
 
-  function handleSort(field: string) {
-    const newOrder = sorting.sort === field && sorting.order === 'ASC' ? 'DESC' : 'ASC';
-    setSorting({ sort: field, order: newOrder });
-  }
+  const filteredEvents = events.filter(
+    (e) => e.event_name.toLowerCase().includes(search.toLowerCase()) || e.event_type.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const ErrorAlert = () => error ? (
+    <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm mb-4 transition-all">
+      {error}
+    </div>
+  ) : null;
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Events</h2>
-      {error && <div className="text-sm text-red-600">{error}</div>}
-      {loading && <div className="text-sm text-gray-600">Loading...</div>}
-      
-      {/* Filters */}
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <h3 className="text-lg font-medium mb-3">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Type</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by event type" 
-              value={filters.type} 
-              onChange={e => setFilters({ ...filters, type: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by event name" 
-              value={filters.name} 
-              onChange={e => setFilters({ ...filters, name: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Date</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              type="date" 
-              value={filters.date} 
-              onChange={e => setFilters({ ...filters, date: e.target.value })} 
-            />
-          </div>
-        </div>
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">Events Management</h2>
+        <button
+          onClick={() => setShowForm(!showForm)}
+          className="bg-blue-600 text-white px-4 py-2 rounded-md font-semibold hover:bg-blue-700 transition-colors"
+          disabled={loading}
+        >
+          {showForm ? 'Cancel' : 'Add Event'}
+        </button>
       </div>
-      
+
       {/* Import Section */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium">Import Events (CSV/XLSX):</label>
-        <input
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          onChange={async e => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            setUploading(true);
-            try {
-              const formData = new FormData();
-              formData.append('file', file);
-              await api.post('/events/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-              await load();
-            } catch (e: any) {
-              setError(e?.response?.data?.error || 'Failed to upload file');
-            } finally {
-              setUploading(false);
-            }
-          }}
-          className="border p-2 rounded"
-        />
-        {uploading && <span className="text-sm text-gray-600">Uploading...</span>}
+      <div className="bg-white p-6 rounded-xl shadow-md">
+        <h3 className="text-lg font-medium mb-3 text-gray-900">Import Events</h3>
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-gray-700">Upload Events.csv or .xlsx:</label>
+          <input 
+            type="file" 
+            accept=".xlsx,.xls,.csv" 
+            onChange={upload} 
+            disabled={loading}
+            className="border border-gray-300 p-2 rounded-md file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+          />
+          {loading && <span className="text-sm text-blue-600">Uploading...</span>}
+        </div>
       </div>
-      
+
       {/* Add/Edit Form */}
-      <form onSubmit={editingEvent ? updateEvent : submit} className="grid grid-cols-4 gap-3 items-end">
-        <input className="border p-2 rounded" placeholder="Event Type" value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })} />
-        <input className="border p-2 rounded" placeholder="Event Name" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} />
-        <input className="border p-2 rounded" type="date" value={form.event_date} onChange={e => setForm({ ...form, event_date: e.target.value })} />
-        <div className="flex gap-2">
-          <button className="bg-blue-600 text-white px-4 py-2 rounded">
-            {editingEvent ? 'Update' : 'Add'}
-          </button>
-          {editingEvent && (
-            <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded">
-              Cancel
-            </button>
-          )}
-        </div>
-      </form>
-      
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
-            <tr className="bg-gray-100 text-left">
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_id')}>
-                ID {sorting.sort === 'event_id' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_type')}>
-                Type {sorting.sort === 'event_type' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_name')}>
-                Name {sorting.sort === 'event_name' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_date')}>
-                Date {sorting.sort === 'event_date' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map(ev => (
-              <tr key={ev.event_id}>
-                <td className="p-2 border">{ev.event_id}</td>
-                <td className="p-2 border">{ev.event_type}</td>
-                <td className="p-2 border">{ev.event_name}</td>
-                <td className="p-2 border">{new Date(ev.event_date).toLocaleDateString()}</td>
-                <td className="p-2 border">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => startEdit(ev)}
-                      className="bg-blue-500 text-white px-2 py-1 rounded text-sm hover:bg-blue-600"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteEvent(ev.event_id)}
-                      className="bg-red-500 text-white px-2 py-1 rounded text-sm hover:bg-red-600"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">
-          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} events
-        </div>
-        <div className="flex gap-2">
+      {showForm && (
+        <form onSubmit={submit} className="bg-white p-6 rounded-xl shadow-md space-y-4">
+          <ErrorAlert />
+          <div className="grid md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
+              <input
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                value={form.event_type}
+                onChange={(e) => setForm({ ...form, event_type: e.target.value })}
+                placeholder="e.g., Wellness Session"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Event Name</label>
+              <input
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                value={form.event_name}
+                onChange={(e) => setForm({ ...form, event_name: e.target.value })}
+                placeholder="e.g., Yoga Workshop"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Event Date</label>
+              <input
+                type="date"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+                value={form.event_date}
+                onChange={(e) => setForm({ ...form, event_date: e.target.value })}
+                required
+              />
+            </div>
+          </div>
           <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
-            disabled={pagination.page <= 1}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            type="submit"
+            disabled={loading}
+            className="bg-blue-600 text-white px-6 py-2 rounded-md font-semibold hover:bg-blue-700 transition-colors w-full md:w-auto disabled:opacity-50"
           >
-            Previous
+            {editingEvent ? 'Update' : 'Create'} Event
           </button>
-          <span className="px-3 py-1">
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
-          <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
-            disabled={pagination.page >= pagination.totalPages}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next
-          </button>
-        </div>
+        </form>
+      )}
+
+      {/* Search */}
+      <div className="bg-white p-4 rounded-xl shadow-md">
+        <input
+          type="text"
+          placeholder="Search events by name or type..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+        />
       </div>
+
+      {/* Events List */}
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredEvents.map((event) => (
+          <div key={event.event_id} className="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-shadow">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">{event.event_name}</h3>
+            <p className="text-sm text-gray-600 mb-2">{event.event_type}</p>
+            <p className="text-sm text-blue-600 font-medium">{new Date(event.event_date).toLocaleDateString()}</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => startEdit(event)}
+                className="text-blue-600 hover:text-blue-500 text-sm transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                onClick={async () => {
+                  if (confirm('Delete this event?')) {
+                    await api.delete(`/events/${event.event_id}`);
+                    loadEvents();
+                  }
+                }}
+                className="text-red-600 hover:text-red-500 text-sm transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {filteredEvents.length === 0 && !loading && (
+        <p className="text-center text-gray-500 py-8">No events found. Import or create one to get started!</p>
+      )}
     </div>
   );
 }
-
-

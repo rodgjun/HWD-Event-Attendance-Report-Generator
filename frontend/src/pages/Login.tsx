@@ -3,33 +3,86 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
 export function Login() {
-  const [form, setForm] = useState({ username: '', password: '' });
-  const [error, setError] = useState('');
   const navigate = useNavigate();
+  const [form, setForm] = useState({ username: '', password: '' });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
     try {
       const res = await api.post('/auth/login', form);
       localStorage.setItem('token', res.data.token);
       navigate('/');
-      window.location.reload(); // Refresh to update auth state
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Login failed');
+      setError(e.response?.data?.error || 'Login failed');
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="max-w-sm mx-auto bg-white border rounded p-6 mt-10">
-      <div className="text-lg font-semibold mb-4">Admin Login</div>
-      <form onSubmit={submit} className="space-y-3">
-        <input className="border p-2 w-full rounded" placeholder="Username" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} />
-        <input type="password" className="border p-2 w-full rounded" placeholder="Password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-        <button className="bg-blue-600 text-white px-4 py-2 rounded w-full">Login</button>
-      </form>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
+      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg">
+        <div className="text-center">
+          <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
+          <p className="mt-2 text-sm text-gray-600">Sign in to your HWD admin account</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm transition-all">
+              {error}
+            </div>
+          )}
+          <div>
+            <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+              Username
+            </label>
+            <input
+              id="username"
+              type="text"
+              required
+              autoFocus
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              aria-describedby="username-error"
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              required
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              aria-describedby="password-error"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 transition-colors"
+            aria-label="Sign in"
+          >
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
+        <div className="text-center">
+          <button
+            onClick={() => navigate('/')}
+            className="text-sm text-blue-600 hover:text-blue-500 transition-colors"
+          >
+            ← Back to Home
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
-
-
