@@ -47,12 +47,9 @@ npm run dev
 SPA runs at the printed Vite URL (usually `http://localhost:5173`).
 
 4) Login
-- Navigate to `/login` (simple form). Default credentials:
-  - username: `admin`
-  - password: `admin123`
-- Token is kept in localStorage; protected API calls include it automatically.
+- Navigate to `/login` (simple form). 
 
-## Clean Architecture Overview
+## Vertical Slice Architecture Overview
 - Core: `backend/src/core` → DB, models, error middleware
 - Features: `backend/src/features/*` → vertical slices (auth, events, registrations, attendance, reports)
 - Shared: `backend/src/features/_shared` → auth middleware
@@ -148,12 +145,6 @@ Set `.env` in `backend/` for MySQL (XAMPP):
 - `DB_NAME=hwd_db`
 - `DB_USER=root`
 - `DB_PASSWORD=` (empty by default on XAMPP; set if you configured one)
-
-Steps (XAMPP):
-1. Start Apache and MySQL in XAMPP Control Panel.
-2. Open `http://localhost/phpmyadmin`, create database `hwd_db` with utf8mb4.
-3. Ensure `.env` matches the values above.
-4. Run `npm run dev` in `backend/` — Sequelize will auto-create tables with unique constraints.
 
 ## Production Notes
 - Use Postgres/MySQL and a strong `JWT_SECRET`.
