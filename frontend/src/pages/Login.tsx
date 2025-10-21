@@ -24,13 +24,23 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
-      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg">
+    <div className="min-h-[80vh]   bg-gray-50 flex items-center justify-center py-8 px-4 overflow-hidden">
+      <div className="max-w-md w-full space-y-6 bg-white p-6 rounded-xl shadow-lg">
+        {/* Logo */}
+        <div className="text-center mb-4">
+          <img 
+            src="/hwd_logo_2.png" 
+            alt="HWD Logo" 
+            className="mx-auto h-16 w-auto md:h-20" 
+          />
+        </div>
+
+        
         <div className="text-center">
           <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
           <p className="mt-2 text-sm text-gray-600">Sign in to your HWD admin account</p>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm transition-all">
               {error}

@@ -35,9 +35,17 @@ export function AppLayout() {
           <div className="flex justify-between items-center py-4">
             {/* Logo/Brand */}
             <div className="flex items-center">
-              <Link to="/" className="text-xl font-bold text-blue-600">
-                HWD Attendance
+              <Link to="/">
+                <img src="/hwd_logo_2.png" alt="HWD Logo" className="h-8 w-auto" />
               </Link>
+              <Link 
+              to="/" 
+              className="pl-2 text-l font-[Poppins] font-semibold text-blue-600 hover:text-blue-700 transition-colors duration-200"
+            > 
+              HWD 
+            </Link>
+
+
             </div>
 
             {/* Desktop Navigation */}
