@@ -658,29 +658,246 @@ export function Events() {
 
 Landing.tsx
 `
+import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useMemo, useRef } from 'react';
+import { motion, useInView, MotionProps } from 'framer-motion';
+import {
+  LockClosedIcon,
+  ClipboardDocumentCheckIcon,
+  ChartBarIcon,
+  ArrowRightIcon,
+  ArrowDownTrayIcon as DownloadIcon,
+} from '@heroicons/react/24/outline';
+
 export function Landing() {
+  const navigate = useNavigate();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    setIsAuthenticated(!!token);
+  }, []);
+
+  const handleGetStarted = () => {
+    if (!isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+    navigate('/registrations');
+  };
+
+  const handleViewReports = () => {
+    if (!isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+    navigate('/reports');
+  };
+
+  // Memoized variants for stability on re-renders
+  const fadeInUp: MotionProps['variants'] = useMemo(
+    () => ({
+      hidden: { opacity: 0, y: 30 },
+      visible: { 
+        opacity: 1, 
+        y: 0, 
+        transition: { duration: 0.6, ease: 'easeOut' } 
+      },
+    }),
+    []
+  );
+
+  // Refs for in-view detection
+  const heroRef = useRef(null);
+  const guideRef = useRef(null);
+  const templateRef = useRef(null);
+  const inViewHero = useInView(heroRef, { once: true, margin: '-100px' });
+  const inViewGuide = useInView(guideRef, { once: true, margin: '-100px' });
+  const inViewTemplate = useInView(templateRef, { once: true, margin: '-100px' });
+
+  const handleDownload = (filename: string) => {
+    const link = document.createElement('a');
+    link.href = `/${filename}`;
+    link.download = filename;
+    link.click();
+  };
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Welcome to HWD Attendance & Events</h1>
-      <p className="text-gray-700">Follow these steps to use the system:</p>
-      <ol className="list-decimal pl-6 space-y-2 text-gray-800">
-        <li>Create or verify events under the Events page.</li>
-        <li>Upload Registrations using the template on Registrations.</li>
-        <li>Record Attendance via manual entry or file upload.</li>
-        <li>View analytics and export from the Reports page.</li>
-      </ol>
-      <div className="bg-blue-50 p-4 rounded border border-blue-200">
-        <div className="font-medium">CSV Templates</div>
-        <ul className="list-disc pl-6 text-sm text-gray-700">
-          <li>Events.csv: Event ID | Event Type | Event Name | Event Date</li>
-          <li>Registration.csv: Employee No | Employee Name | Department | Event ID | Status</li>
-          <li>Attendance.csv: Employee No | Employee Name | Department | Mode of Attendance | Event ID</li>
-        </ul>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+      {/* Hero Section */}
+      <motion.section
+      ref={heroRef}
+      initial="hidden"
+      animate={inViewHero ? 'visible' : 'hidden'}
+      variants={fadeInUp}
+      className="min-h-[80vh] flex flex-col justify-center items-center px-4 text-center bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-600 rounded-b-3xl"
+    >
+      <div className="max-w-4xl mx-auto space-y-6">
+        <h1 className="text-4xl md:text-5xl font-bold text-white leading-tight">
+          Streamline Health & Wellness
+          <br />
+          Event Management
+        </h1>
+        <p className="text-lg md:text-xl text-blue-100 max-w-2xl mx-auto leading-relaxed">
+          Effortlessly track attendance, validate registrations, and generate insightful reports for BSP's wellness programs.
+        </p>
+
+        {/* Image stays in the same position */}
+        <div className="mt-6 mb-6">
+          <img
+            src="/health-landing.jpg"
+            alt="Wellness tracking illustration"
+            className="w-[400px] h-[200px] mx-auto rounded-2xl shadow-lg object-cover"
+          />
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+          <button
+            onClick={handleGetStarted}
+            className="bg-white text-blue-700 px-8 py-3 text-lg font-semibold rounded-full shadow-md hover:shadow-lg transform hover:scale-105 transition-all duration-300 flex items-center gap-2"
+            aria-label="Get started with registrations"
+          >
+            Get Started
+            <ArrowRightIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={handleViewReports}
+            className="border-2 border-white text-white px-8 py-3 text-lg font-semibold rounded-full hover:bg-white/20 transition-all duration-300 flex items-center gap-2"
+            aria-label="View reports"
+          >
+            View Reports
+            <ChartBarIcon className="w-5 h-5" />
+          </button>
+        </div>
       </div>
+    </motion.section>
+
+
+      {/* User Guide Section */}
+      <motion.section
+        ref={guideRef}
+        initial="hidden"
+        animate={inViewGuide ? 'visible' : 'hidden'}
+        variants={fadeInUp}
+        className="max-w-6xl mx-auto py-20"
+      >
+        <h2 className="text-4xl font-bold text-center text-gray-900 mb-16">How to Use the System</h2>
+        <div className="grid md:grid-cols-3 gap-8">
+          {[
+            {
+              icon: LockClosedIcon,
+              number: '1',
+              title: 'Login as Admin',
+              desc: 'Access the dashboard with your credentials to manage events and users.',
+            },
+            {
+              icon: ClipboardDocumentCheckIcon,
+              number: '2',
+              title: 'Register & Track Attendance',
+              desc: 'Upload Excel files or add manual entries for seamless validation.',
+            },
+            {
+              icon: ChartBarIcon,
+              number: '3',
+              title: 'Generate Reports',
+              desc: 'View analytics on participation, departments, and more—export anytime.',
+            },
+          ].map((step, index) => (
+            <motion.div
+              key={index}
+              whileHover={{ scale: 1.02, backgroundColor: '#dbeafe' }}
+              className="bg-white p-8 rounded-2xl shadow-md hover:shadow-lg transition-all duration-300 text-center"
+            >
+              <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-blue-600 rounded-full flex items-center justify-center mb-6 mx-auto">
+                <step.icon className="w-8 h-8 text-white" />
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4 mx-auto text-blue-600 font-bold text-xl">
+                {step.number}
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-3">{step.title}</h3>
+              <p className="text-gray-600">{step.desc}</p>
+            </motion.div>
+          ))}
+        </div>
+      </motion.section>
+
+      {/* Excel Templates Guide Section */}
+      <motion.section
+        ref={templateRef}
+        initial="hidden"
+        animate={inViewTemplate ? 'visible' : 'hidden'}
+        variants={fadeInUp}
+        className="max-w-6xl mx-auto py-20"
+      >
+        <h2 className="text-4xl font-bold text-center text-gray-900 mb-8">Excel Templates Guide</h2>
+        <p className="text-center text-gray-600 mb-16 max-w-2xl mx-auto">
+          Use these CSV/Excel formats for bulk uploads. Event Name is used for matching events.
+        </p>
+        <div className="grid md:grid-cols-3 gap-8">
+          {[
+            {
+              title: 'Events.csv',
+              desc: 'Define new events with type, name, and date.',
+              headers: ['Event Type', 'Event Name', 'Event Date'],
+              sample: ['Wellness Session', 'Yoga Workshop', '2025-10-25'],
+              filename: 'events-template.csv',
+            },
+            {
+              title: 'Registrations.csv',
+              desc: 'Register participants by employee details and event.',
+              headers: ['Employee No', 'Employee Name', 'Department', 'Event Name'],
+              sample: ['EMP001', 'John Doe', 'HR', 'Yoga Workshop'],
+              filename: 'registrations-template.csv',
+            },
+            {
+              title: 'Attendance.csv',
+              desc: 'Record attendance with mode and event details.',
+              headers: ['Employee No', 'Employee Name', 'Department', 'Mode', 'Event Name'],
+              sample: ['EMP001', 'John Doe', 'HR', 'Onsite', 'Yoga Workshop'],
+              filename: 'attendance-template.csv',
+            },
+          ].map((template, index) => (
+            <div key={index} className="bg-white p-6 rounded-2xl shadow-md">
+              <h3 className="text-xl font-semibold mb-3 text-blue-600 flex items-center justify-between">
+                {template.title}
+                <button
+                  onClick={() => handleDownload(template.filename)}
+                  className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 transition-colors"
+                  aria-label={`Download ${template.title}`}
+                >
+                  Download <DownloadIcon className="w-4 h-4" />
+                </button>
+              </h3>
+              <p className="text-sm text-gray-600 mb-4">{template.desc}</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-gray-700">
+                  <thead className="bg-blue-50">
+                    <tr>
+                      {template.headers.map((header, hIndex) => (
+                        <th key={hIndex} className="px-3 py-2 text-left font-medium text-blue-700">
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t bg-gray-50">
+                      {template.sample.map((cell, cIndex) => (
+                        <td key={cIndex} className="px-3 py-2">
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      </motion.section>
     </div>
   );
 }
-
 
 
 `
@@ -692,37 +909,99 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 
 export function Login() {
-  const [form, setForm] = useState({ username: '', password: '' });
-  const [error, setError] = useState('');
   const navigate = useNavigate();
+  const [form, setForm] = useState({ username: '', password: '' });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function submit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
     try {
       const res = await api.post('/auth/login', form);
       localStorage.setItem('token', res.data.token);
       navigate('/');
-      window.location.reload(); // Refresh to update auth state
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Login failed');
+      setError(e.response?.data?.error || 'Login failed');
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="max-w-sm mx-auto bg-white border rounded p-6 mt-10">
-      <div className="text-lg font-semibold mb-4">Admin Login</div>
-      <form onSubmit={submit} className="space-y-3">
-        <input className="border p-2 w-full rounded" placeholder="Username" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} />
-        <input type="password" className="border p-2 w-full rounded" placeholder="Password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-        <button className="bg-blue-600 text-white px-4 py-2 rounded w-full">Login</button>
-      </form>
+    <div className="min-h-[80vh]   bg-gray-50 flex items-center justify-center py-8 px-4 overflow-hidden">
+      <div className="max-w-md w-full space-y-6 bg-white p-6 rounded-xl shadow-lg">
+        {/* Logo */}
+        <div className="text-center mb-4">
+          <img 
+            src="/hwd_logo_2.png" 
+            alt="HWD Logo" 
+            className="mx-auto h-16 w-auto md:h-20" 
+          />
+        </div>
+
+        
+        <div className="text-center">
+          <h2 className="text-3xl font-bold text-gray-900">Welcome Back</h2>
+          <p className="mt-2 text-sm text-gray-600">Sign in to your HWD admin account</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm transition-all">
+              {error}
+            </div>
+          )}
+          <div>
+            <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
+              Username
+            </label>
+            <input
+              id="username"
+              type="text"
+              required
+              autoFocus
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              aria-describedby="username-error"
+            />
+          </div>
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              required
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              aria-describedby="password-error"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 transition-colors"
+            aria-label="Sign in"
+          >
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
+        <div className="text-center">
+          <button
+            onClick={() => navigate('/')}
+            className="text-sm text-blue-600 hover:text-blue-500 transition-colors"
+          >
+            ← Back to Home
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
-
-
-
 `
 
 NotFound.tsx
@@ -1160,76 +1439,141 @@ export function Reports() {
 
 AppLayout.tsx
 `
-import { Link, Outlet, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 
 export function AppLayout() {
   const { pathname } = useLocation();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    setIsAuthenticated(!!token);
-  }, []);
+  const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isAuthenticated = !!localStorage.getItem('token'); // Compute directly for real-time updates
 
   const handleLogout = () => {
     localStorage.removeItem('token');
-    setIsAuthenticated(false);
-    window.location.href = '/login';
+    navigate('/login');
   };
 
-  const NavLink = ({ to, label }: { to: string; label: string }) => (
+  const NavLink = ({ to, label, onClick }: { to: string; label: string; onClick?: () => void }) => (
     <Link
       to={to}
-      className={`px-3 py-2 rounded-md text-sm font-medium ${
-        pathname === to ? 'bg-blue-600 text-white' : 'text-blue-700 hover:bg-blue-100'
+      onClick={onClick}
+      className={`block px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+        pathname === to
+          ? 'bg-blue-600 text-white'
+          : 'text-gray-700 hover:bg-blue-100 hover:text-blue-700'
       }`}
+      aria-current={pathname === to ? 'page' : undefined}
     >
       {label}
     </Link>
   );
 
   return (
-    <div className="min-h-full">
-      <nav className="bg-white border-b">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="font-semibold">HWD Attendance</div>
-            <div className="flex gap-2">
+    <div className="min-h-screen bg-gray-50">
+      {/* Navbar */}
+      <nav className="bg-white shadow-sm border-b border-gray-200 fixed w-full z-50">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-4">
+            {/* Logo/Brand */}
+            <div className="flex items-center">
+              <Link to="/">
+                <img src="/hwd_logo_2.png" alt="HWD Logo" className="h-8 w-auto" />
+              </Link>
+              <Link 
+              to="/" 
+              className="pl-2 text-l font-[Poppins] font-semibold text-blue-600 hover:text-blue-700 transition-colors duration-200"
+            > 
+              HWD 
+            </Link>
+
+
+            </div>
+
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center space-x-1">
               <NavLink to="/" label="Home" />
               <NavLink to="/events" label="Events" />
               <NavLink to="/registrations" label="Registrations" />
               <NavLink to="/attendance" label="Attendance" />
               <NavLink to="/reports" label="Reports" />
             </div>
-          </div>
-          <div className="flex gap-2">
-            {isAuthenticated ? (
+
+            {/* Auth Button */}
+            <div className="hidden md:flex items-center space-x-2">
+              {isAuthenticated ? (
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                  aria-label="Logout"
+                >
+                  Logout
+                </button>
+              ) : (
+                <Link
+                  to="/login"
+                  className="px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                >
+                  Login
+                </Link>
+              )}
+            </div>
+
+            {/* Mobile menu button */}
+            <div className="md:hidden">
               <button
-                onClick={handleLogout}
-                className="px-3 py-2 rounded-md text-sm font-medium text-red-700 hover:bg-red-100"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="text-gray-700 hover:text-blue-600 p-2"
+                aria-label="Toggle menu"
+                aria-expanded={mobileMenuOpen}
               >
-                Logout
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}
+                  />
+                </svg>
               </button>
-            ) : (
-              <Link
-                to="/login"
-                className="px-3 py-2 rounded-md text-sm font-medium text-blue-700 hover:bg-blue-100"
-              >
-                Login
-              </Link>
-            )}
+            </div>
           </div>
+
+          {/* Mobile Navigation */}
+          {mobileMenuOpen && (
+            <div className="md:hidden pb-4 space-y-1">
+              <NavLink to="/" label="Home" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink to="/events" label="Events" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink to="/registrations" label="Registrations" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink to="/attendance" label="Attendance" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink to="/reports" label="Reports" onClick={() => setMobileMenuOpen(false)} />
+              {isAuthenticated ? (
+                <button
+                  onClick={handleLogout}
+                  className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                >
+                  Logout
+                </button>
+              ) : (
+                <Link
+                  to="/login"
+                  className="block w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-blue-50"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  Login
+                </Link>
+              )}
+            </div>
+          )}
         </div>
       </nav>
-      <main className="mx-auto max-w-6xl p-4">
+
+      {/* Main Content with Padding for Fixed Navbar */}
+      <main className="pt-20 mx-auto max-w-6xl p-4">
         <Outlet />
       </main>
     </div>
   );
 }
-
-
 
 `
 

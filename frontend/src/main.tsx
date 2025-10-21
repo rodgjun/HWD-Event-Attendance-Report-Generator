@@ -9,6 +9,7 @@ import { Registrations } from './pages/Registrations';
 import { Attendance } from './pages/Attendance';
 import { Reports } from './pages/Reports';
 import { Login } from './pages/Login';
+import { Kiosk } from './pages/Kiosk';
 
 const router = createBrowserRouter([
   {
@@ -21,6 +22,8 @@ const router = createBrowserRouter([
       { path: 'attendance', element: <Attendance /> },
       { path: 'reports', element: <Reports /> },
       { path: 'login', element: <Login /> },
+      // In createBrowserRouter children array
+      { path: 'kiosk', element: <Kiosk /> },
     ],
   },
 ]);

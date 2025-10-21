@@ -1,11 +1,15 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { Toaster } from 'react-hot-toast';
 
 export function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isAuthenticated = !!localStorage.getItem('token'); // Compute directly for real-time updates
+
+  // In AppLayout component, wrap navbar in conditional
+  const isKiosk = pathname === '/kiosk';
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -29,7 +33,7 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navbar */}
+      {!isKiosk && (
       <nav className="bg-white shadow-sm border-b border-gray-200 fixed w-full z-50">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
@@ -125,11 +129,11 @@ export function AppLayout() {
           )}
         </div>
       </nav>
-
-      {/* Main Content with Padding for Fixed Navbar */}
-      <main className="pt-20 mx-auto max-w-6xl p-4">
-        <Outlet />
-      </main>
+      )}
+    <main className={`mx-auto max-w-6xl p-4 ${isKiosk ? 'pt-0' : 'pt-20'}`}>
+      <Outlet />
+    </main>
+    <Toaster position="top-right" containerStyle={{ zIndex: 9999 }} />  {/* Global, high z-index for kiosk fullscreen */}
     </div>
   );
 }

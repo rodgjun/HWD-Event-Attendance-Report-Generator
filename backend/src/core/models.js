@@ -13,7 +13,7 @@ export const Dmag = sequelize.define('dmag', {
   department: { type: DataTypes.STRING },
   age: { type: DataTypes.INTEGER },
   gender: { type: DataTypes.ENUM('Male', 'Female') },
-});
+}, { timestamps: false });
 
 export const Event = sequelize.define('event', {
   event_id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
@@ -54,6 +54,16 @@ export function registerModels() {
   Attendance.belongsTo(Event, { foreignKey: 'event_id' });
   Event.hasMany(Attendance, { foreignKey: 'event_id' });
 }
+
+export async function getUniqueDepartments() {
+  const { sequelize } = await import('./db.js');
+  const departments = await sequelize.query(
+    `SELECT DISTINCT department FROM dmags WHERE department IS NOT NULL ORDER BY department`,
+    { type: sequelize.QueryTypes.SELECT }
+  );
+  return departments;
+}
+
 
 export async function syncDb() {
   await sequelize.sync();
