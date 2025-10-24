@@ -371,7 +371,7 @@ export function Registrations() {
                         type="text"
                         value={form.employee_no}
                         onChange={handleEmployeeNoChange}
-                        onKeyDown={(e) => handleKeyDown(e, editingRegId)}
+                        onKeyDown={(e) => handleKeyDown(e, editingRegId ?? undefined)}
                         className="w-full p-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
@@ -380,7 +380,7 @@ export function Registrations() {
                         type="text"
                         value={form.employee_name}
                         onChange={(e) => setForm({ ...form, employee_name: e.target.value })}
-                        onKeyDown={(e) => handleKeyDown(e, editingRegId)}
+                        onKeyDown={(e) => handleKeyDown(e, editingRegId ?? undefined)}
                         className="w-full p-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                         placeholder="Required"
                       />
@@ -390,7 +390,7 @@ export function Registrations() {
                         list="departments-list"
                         value={form.department}
                         onChange={(e) => setForm({ ...form, department: e.target.value })}
-                        onKeyDown={(e) => handleKeyDown(e, editingRegId)}
+                        onKeyDown={(e) => handleKeyDown(e, editingRegId ?? undefined)}
                         className="w-full p-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       <datalist id="departments-list">
@@ -400,7 +400,7 @@ export function Registrations() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <motion.button
                         whileHover={{ scale: 1.02 }}
-                        onClick={() => handleAddOrUpdate(editingRegId)}
+                        onClick={() => handleAddOrUpdate(editingRegId ?? undefined)}
                         disabled={loading || !form.employee_name.trim() || !form.event_id}
                         className="text-green-600 hover:text-green-900 mr-2 disabled:opacity-50"
                       >
