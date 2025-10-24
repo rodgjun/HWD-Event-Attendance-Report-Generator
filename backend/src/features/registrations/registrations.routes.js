@@ -2,14 +2,15 @@ import { Router } from 'express';
 import multer from 'multer';
 import XLSX from 'xlsx';
 import { body, validationResult } from 'express-validator';
-import { Registration, Event } from '../../core/models.js';
 import { sequelize } from '../../core/db.js';
+import { Registration, Event } from '../../core/models.js';
 import { requireAuth } from '../_shared/auth-middleware.js';
 import { Op } from 'sequelize';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const registrationsRouter = Router();
 
+// GET /registrations - Paginated list with unified case-insensitive search and filters
 registrationsRouter.get('/', requireAuth, async (req, res, next) => {
   try {
     const { 
@@ -19,59 +20,41 @@ registrationsRouter.get('/', requireAuth, async (req, res, next) => {
       order = 'DESC', 
       event_id,
       employee_no,
-      employee_name,
-      department,
-      event_name
+      search 
     } = req.query;
-    const offset = (page - 1) * limit;
+    const offset = (Number(page) - 1) * Number(limit);
     
     const where = {};
-    if (event_id) where.event_id = event_id;
+    if (event_id) where.event_id = Number(event_id);
     if (employee_no) {
-      where.employee_no = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('employee_no')),
-        { [Op.like]: `%${employee_no.toLowerCase()}%` }
-      );
+      where.employee_no = { [Op.iLike]: `%${employee_no}%` };
     }
-    if (employee_name) {
-      where.employee_name = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('employee_name')),
-        { [Op.like]: `%${employee_name.toLowerCase()}%` }
-      );
-    }
-    if (department) {
-      where.department = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('department')),
-        { [Op.like]: `%${department.toLowerCase()}%` }
-      );
+    if (search) {
+      where[Op.or] = [
+        { employee_name: { [Op.iLike]: `%${search}%` } },
+        { employee_no: { [Op.iLike]: `%${search}%` } }
+      ];
     }
     
-    const includeWhere = {};
-    if (event_name) {
-      includeWhere.event_name = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('event_name')),
-        { [Op.like]: `%${event_name.toLowerCase()}%` }
-      );
-    }
+    const include = [{
+      model: Event,
+      attributes: ['event_id', 'event_name']
+    }];
     
     const { count, rows } = await Registration.findAndCountAll({
       where,
-      include: [{
-        model: Event,
-        where: Object.keys(includeWhere).length > 0 ? includeWhere : undefined,
-        required: Object.keys(includeWhere).length > 0
-      }],
+      include,
       order: [[sort, order.toUpperCase()]],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit: Number(limit),
+      offset
     });
     
     res.json({
       registrations: rows,
       pagination: {
         total: count,
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: Number(page),
+        limit: Number(limit),
         totalPages: Math.ceil(count / limit)
       }
     });
@@ -81,233 +64,245 @@ registrationsRouter.get('/', requireAuth, async (req, res, next) => {
   }
 });
 
-registrationsRouter.post(
-  '/',
-  requireAuth,
-  [
-    body('employee_no').optional().trim(),  // Allow empty/undefined; handle in code
-    body('employee_name').optional().isString().trim(),
-    body('department').optional().isString().trim(),
-    body('event_name').isString().notEmpty().trim(),
-  ],
-  async (req, res, next) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        console.error('POST /registrations validation errors:', errors.array());
-        return res.status(400).json({ error: 'Validation failed', details: errors.array() });
-      }
-      
-      const { event_name, employee_no, ...rest } = req.body;
-      const event = await Event.findOne({ where: { event_name } });
-      if (!event) {
-        console.error(`POST /registrations: Event "${event_name}" not found`);
-        return res.status(404).json({ error: 'Event not found', details: `Event "${event_name}" does not exist` });
-      }
-      
-      const finalEmployeeNo = (employee_no === '' || employee_no === undefined || employee_no === null) ? 'NA' : employee_no.trim();
-
-      // Conditional duplicate check
-      let existingRegistration;
-      if (finalEmployeeNo === 'NA') {
-        // For NA: Check employee_name + event_id (case-insensitive)
-        existingRegistration = await Registration.findOne({
-          where: {
-            employee_no: 'NA',
-            event_id: event.event_id,
-            employee_name: { [Op.iLike]: rest.employee_name?.trim() || '' }  // Assumes employee_name in rest
-          }
-        });
-      } else {
-        // For actual employee_no: Standard check
-        existingRegistration = await Registration.findOne({
-          where: {
-            employee_no: finalEmployeeNo,
-            event_id: event.event_id
-          }
-        });
-      }
-
-      if (existingRegistration) {
-        return res.status(409).json({ 
-          error: 'Duplicate registration found', 
-          details: finalEmployeeNo === 'NA' 
-            ? `Employee "${rest.employee_name?.trim() || 'unknown'}" is already registered for this event` 
-            : `Employee ${finalEmployeeNo} is already registered for this event` 
-        });
-      }
-      
-      const created = await Registration.create({
-        ...rest,
-        employee_no: finalEmployeeNo,
-        event_id: event.event_id
-      });
-      res.status(201).json(created);
-    } catch (e) {
-      console.error('POST /registrations error:', e);
-      next(e);
-    }
-  }
-);
-
-// PUT validation and logic (similar changes)
-registrationsRouter.put(
-  '/:id',
-  requireAuth,
-  [
-    body('employee_no').optional().trim(),  // Allow empty/undefined
-    body('employee_name').optional().isString().trim(),
-    body('department').optional().isString().trim(),
-    body('event_name').optional().isString().trim(),
-  ],
-  async (req, res, next) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        console.error('PUT /registrations/:id validation errors:', errors.array());
-        return res.status(400).json({ error: 'Validation failed', details: errors.array() });
-      }
-      const id = parseInt(req.params.id, 10);  // Parse to int to avoid Op.ne issues
-      if (isNaN(id)) {
-        return res.status(400).json({ error: 'Invalid ID', details: 'Registration ID must be a number' });
-      }
-      const registration = await Registration.findByPk(id);
-      if (!registration) {
-        console.error(`PUT /registrations/${id}: Registration not found`);
-        return res.status(404).json({ error: 'Registration not found', details: `ID ${id} does not exist` });
-      }
-      
-      const { event_name, employee_no, ...rest } = req.body;
-      let event_id = registration.event_id;
-      if (event_name) {
-        const event = await Event.findOne({ where: { event_name } });
-        if (!event) {
-          console.error(`PUT /registrations/${id}: Event "${event_name}" not found`);
-          return res.status(404).json({ error: 'Event not found', details: `Event "${event_name}" does not exist` });
-        }
-        event_id = event.event_id;
-      }
-      
-      const finalEmployeeNo = (employee_no === '' || employee_no === undefined || employee_no === null) ? 'NA' : employee_no.trim();
-
-      // Conditional duplicate check
-      let existingRegistration;
-      if (finalEmployeeNo === 'NA') {
-        // For NA: Check employee_name + event_id (case-insensitive)
-        existingRegistration = await Registration.findOne({
-          where: {
-            employee_no: 'NA',
-            event_id: event.event_id,
-            employee_name: { [Op.iLike]: rest.employee_name?.trim() || '' }  // Assumes employee_name in rest
-          }
-        });
-      } else {
-        // For actual employee_no: Standard check
-        existingRegistration = await Registration.findOne({
-          where: {
-            employee_no: finalEmployeeNo,
-            event_id: event.event_id
-          }
-        });
-      }
-
-      if (existingRegistration) {
-        return res.status(409).json({ 
-          error: 'Duplicate registration found', 
-          details: finalEmployeeNo === 'NA' 
-            ? `Employee "${rest.employee_name?.trim() || 'unknown'}" is already registered for this event` 
-            : `Employee ${finalEmployeeNo} is already registered for this event` 
-        });
-      }
-      
-      await registration.update({ ...rest, employee_no: finalEmployeeNo, event_id });
-      res.json(registration);
-    } catch (e) {
-      console.error(`PUT /registrations/${req.params.id} error:`, e);
-      next(e);
-    }
-  }
-);
-
-registrationsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+// GET /registrations/template - Download Excel template
+registrationsRouter.get('/template', requireAuth, async (req, res, next) => {
   try {
-    const registration = await Registration.findByPk(req.params.id);
-    if (!registration) {
-      console.error(`DELETE /registrations/${req.params.id}: Registration not found`);
-      return res.status(404).json({ error: 'Registration not found', details: `ID ${req.params.id} does not exist` });
-    }
-    await registration.destroy();
-    res.json({ message: 'Registration deleted successfully' });
+    // Fetch all events for reference sheet
+    const events = await Event.findAll({ attributes: ['event_id', 'event_name'] });
+
+    // Create main template sheet
+    const templateData = [
+      ['Employee No', 'Employee Name', 'Department', 'Event Name'], // Headers
+      ['EMP001', 'John Doe', 'IT', 'Sample Event'] // Sample row
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(templateData);
+
+    // Create events reference sheet
+    const eventsData = [['Event ID', 'Event Name']];
+    events.forEach(event => eventsData.push([event.event_id, event.event_name]));
+    const eventsWs = XLSX.utils.aoa_to_sheet(eventsData);
+
+    // Bundle into workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Registrations Template');
+    XLSX.utils.book_append_sheet(wb, eventsWs, 'Events Reference');
+
+    // Write and send as download
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=registrations-template.xlsx');
+    res.send(buffer);
   } catch (e) {
-    console.error(`DELETE /registrations/${req.params.id} error:`, e);
+    console.error('GET /registrations/template error:', e);
     next(e);
   }
 });
 
+// POST /registrations - Create new registration
+registrationsRouter.post(
+  '/',
+  requireAuth,
+  [
+    body('employee_no').optional().trim(),
+    body('employee_name').isString().notEmpty().trim(),
+    body('department').optional().isString().trim(),
+    body('event_id').isInt({ min: 1 })
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      }
+      
+      const { event_id, employee_no, employee_name, department } = req.body;
+      const finalEmployeeNo = employee_no?.trim() || null;
+      
+      // Duplicate check: employee_no + event_id OR employee_name + event_id (case-insensitive for name)
+      const existing = await Registration.findOne({
+        where: {
+          event_id: Number(event_id),
+          [Op.or]: [
+            finalEmployeeNo ? { employee_no: finalEmployeeNo } : null,
+            sequelize.where(
+              sequelize.fn('LOWER', sequelize.col('employee_name')),
+              sequelize.fn('LOWER', employee_name.trim())
+            )
+          ].filter(Boolean)
+        }
+      });
+      
+      if (existing) {
+        return res.status(409).json({ 
+          error: 'Duplicate registration found',
+          details: `Registration for "${employee_name.trim()}" in event ${event_id} already exists`
+        });
+      }
+      
+      const created = await Registration.create({
+        employee_no: finalEmployeeNo,
+        employee_name: employee_name.trim(),
+        department: department?.trim() || null,
+        event_id: Number(event_id)
+      });
+      
+      res.status(201).json(created);
+    } catch (e) {
+      if (e.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ error: 'Duplicate registration', details: 'Unique constraint violated' });
+      }
+      next(e);
+    }
+  }
+);
+
+// PUT /registrations/:id - Update registration
+registrationsRouter.put(
+  '/:id',
+  requireAuth,
+  [
+    body('employee_no').optional().trim(),
+    body('employee_name').optional().isString().trim(),
+    body('department').optional().isString().trim(),
+    body('event_id').optional().isInt({ min: 1 })
+  ],
+  async (req, res, next) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
+      
+      const registration = await Registration.findByPk(req.params.id);
+      if (!registration) return res.status(404).json({ error: 'Registration not found' });
+      
+      const { event_id, employee_no, employee_name, department } = req.body;
+      const updateData = {
+        ...(employee_name && { employee_name: employee_name.trim() }),
+        ...(employee_no && { employee_no: employee_no.trim() }),
+        ...(department && { department: department.trim() }),
+        ...(event_id && { event_id: Number(event_id) })
+      };
+      
+      // Duplicate check excluding self (case-insensitive for name)
+      const existing = await Registration.findOne({
+        where: {
+          ...updateData,
+          reg_id: { [Op.ne]: req.params.id },
+          [Op.or]: [
+            updateData.employee_no ? { employee_no: updateData.employee_no } : null,
+            updateData.employee_name ? sequelize.where(
+              sequelize.fn('LOWER', sequelize.col('employee_name')),
+              sequelize.fn('LOWER', updateData.employee_name)
+            ) : null
+          ].filter(Boolean)
+        }
+      });
+      
+      if (existing) {
+        return res.status(409).json({ error: 'Duplicate registration found' });
+      }
+      
+      await registration.update(updateData);
+      res.json(registration);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// DELETE /registrations/:id
+registrationsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const registration = await Registration.findByPk(req.params.id);
+    if (!registration) return res.status(404).json({ error: 'Registration not found' });
+    await registration.destroy();
+    res.json({ message: 'Registration deleted successfully' });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// POST /registrations/upload - Excel upload with parsing, in-file + DB duplicate checks, and skipping
 registrationsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res, next) => {
   try {
     const { buffer } = req.file || {};
-    if (!buffer) {
-      console.error('POST /registrations/upload: No file uploaded');
-      return res.status(400).json({ error: 'No file uploaded', details: 'Please select a valid Excel/CSV file' });
-    }
+    if (!buffer) return res.status(400).json({ error: 'No file uploaded' });
+    
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    
     const created = [];
     const skipped = [];
-    
-    // Track unique keys conditionally
-    const seen = new Map();
+    const seen = new Map(); // Track in-file duplicates: employee_no_event_id or lowercase_name_event_id
     
     for (const row of rows) {
-      let employee_no = row['Employee No']?.toString().trim();
-      const rawEmployeeName = row['Employee Name']?.toString().trim();
-      const event_name = row['Event Name']?.toString().trim();
+      const rawEmployeeNo = (row['Employee No'] || '').toString().trim();
+      const rawEmployeeName = (row['Employee Name'] || '').toString().trim();
+      const rawDepartment = (row['Department'] || '').toString().trim();
+      const event_name = (row['Event Name'] || '').toString().trim();
       
-      if (!event_name) {
-        skipped.push({ ...row, reason: 'Missing Event Name' });
-        console.warn(`Upload skipping row: Missing Event Name`);
+      if (!rawEmployeeName || rawEmployeeName.length < 2) {
+        skipped.push({ ...row, reason: 'Invalid or missing Employee Name' });
         continue;
       }
       
-      const event = await Event.findOne({ where: { event_name } });
+      // Find event by name (case-insensitive)
+      const event = await Event.findOne({
+        where: sequelize.where(
+          sequelize.fn('LOWER', sequelize.col('event_name')),
+          sequelize.fn('LOWER', event_name)
+        )
+      });
+      
       if (!event) {
         skipped.push({ ...row, reason: `Event "${event_name}" not found` });
-        console.warn(`Upload skipping row: Event "${event_name}" not found`);
         continue;
       }
       
-      // Handle empty employee_no → 'NA'
-      const finalEmployeeNo = (employee_no === '' || !employee_no) ? 'NA' : employee_no;
+      const finalEmployeeNo = rawEmployeeNo || null; // null for walk-ins
+      const key = finalEmployeeNo 
+        ? `${finalEmployeeNo}_${event.event_id}` 
+        : `NA_${event.event_id}_${rawEmployeeName.toLowerCase()}`;
       
-      // Conditional duplicate key
-      let key;
-      if (finalEmployeeNo === 'NA') {
-        if (!rawEmployeeName) {
-          skipped.push({ ...row, reason: 'Employee Name required for walk-in (no Employee No)' });
-          console.warn(`Upload skipping row: Missing Employee Name for walk-in`);
-          continue;
-        }
-        key = `NA_${event.event_id}_${rawEmployeeName.toLowerCase()}`;
-      } else {
-        key = `${finalEmployeeNo}_${event.event_id}`;
-      }
-      
+      // Check in-file duplicates first
       if (seen.has(key)) {
-        const reason = finalEmployeeNo === 'NA' 
-          ? `Duplicate walk-in "${rawEmployeeName}" for event "${event_name}"`
-          : `Duplicate employee "${finalEmployeeNo}" for event "${event_name}"`;
+        const reason = finalEmployeeNo 
+          ? `Duplicate employee "${finalEmployeeNo}" for event "${event_name}" (in file)`
+          : `Duplicate walk-in "${rawEmployeeName}" for event "${event_name}" (in file)`;
         skipped.push({ ...row, reason });
-        console.warn(`Upload skipping duplicate: ${key}`);
+        console.warn(`Upload skipping in-file duplicate: ${key}`);
         continue;
       }
-      seen.set(key, true);
       
+      // Check DB duplicates
+      const existingInDb = await Registration.findOne({
+        where: {
+          event_id: event.event_id,
+          [Op.or]: [
+            finalEmployeeNo ? { employee_no: finalEmployeeNo } : null,
+            sequelize.where(
+              sequelize.fn('LOWER', sequelize.col('employee_name')),
+              rawEmployeeName.toLowerCase()
+            )
+          ].filter(Boolean)
+        }
+      });
+      
+      if (existingInDb) {
+        const reason = finalEmployeeNo 
+          ? `Employee "${finalEmployeeNo}" already registered for event "${event_name}"`
+          : `Walk-in "${rawEmployeeName}" already registered for event "${event_name}"`;
+        skipped.push({ ...row, reason });
+        console.warn(`Upload skipping DB duplicate: ${key}`);
+        continue;
+      }
+      
+      // Safe to insert
+      seen.set(key, true);
       const record = await Registration.create({
         employee_no: finalEmployeeNo,
-        employee_name: rawEmployeeName || null,
-        department: row['Department']?.toString().trim() || null,
+        employee_name: rawEmployeeName,
+        department: rawDepartment || null,
         event_id: event.event_id,
       });
       created.push(record);
@@ -316,7 +311,7 @@ registrationsRouter.post('/upload', requireAuth, upload.single('file'), async (r
     const response = { inserted: created.length };
     if (skipped.length > 0) {
       response.skipped = skipped.length;
-      response.skip_details = skipped; // For debugging; remove in production if sensitive
+      response.skip_details = skipped;
     }
     console.log(`Upload completed: ${response.inserted} inserted, ${response.skipped || 0} skipped`);
     res.json(response);
@@ -326,8 +321,7 @@ registrationsRouter.post('/upload', requireAuth, upload.single('file'), async (r
   }
 });
 
-
-// Add after the existing routes
+// GET /registrations/departments - Existing route for departments (unchanged)
 registrationsRouter.get('/departments', requireAuth, async (req, res, next) => {
   try {
     const departments = await sequelize.query(
@@ -337,6 +331,57 @@ registrationsRouter.get('/departments', requireAuth, async (req, res, next) => {
     res.json(departments.map(d => d.department).filter(Boolean));
   } catch (e) {
     console.error('GET /registrations/departments error:', e);
+    next(e);
+  }
+});
+
+// GET /registrations/export - Export filtered data as XLSX
+registrationsRouter.get('/export', requireAuth, async (req, res, next) => {
+  try {
+    const { event_id, search } = req.query;
+    
+    const where = {};
+    if (event_id) where.event_id = Number(event_id);
+    if (search) {
+      where[Op.or] = [
+        { employee_name: { [Op.iLike]: `%${search}%` } },
+        { employee_no: { [Op.iLike]: `%${search}%` } }
+      ];
+    }
+    
+    const include = [{
+      model: Event,
+      attributes: ['event_name']
+    }];
+    
+    const records = await Registration.findAll({
+      where,
+      include,
+      order: [['reg_id', 'ASC']]
+    });
+    
+    // Prepare data for XLSX (CSV-like: flat array of arrays)
+    const data = [
+      ['ID', 'Employee No', 'Employee Name', 'Department', 'Event Name'], // Headers
+      ...records.map(r => [
+        r.reg_id,
+        r.employee_no || '',
+        r.employee_name,
+        r.department || '',
+        r.event?.event_name || ''
+      ])
+    ];
+    
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Registrations');
+    
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=registrations-export.xlsx');
+    res.send(buffer);
+  } catch (e) {
+    console.error('GET /registrations/export error:', e);
     next(e);
   }
 });

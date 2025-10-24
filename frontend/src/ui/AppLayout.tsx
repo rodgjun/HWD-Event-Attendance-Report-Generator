@@ -58,6 +58,7 @@ export function AppLayout() {
               <NavLink to="/events" label="Events" />
               <NavLink to="/registrations" label="Registrations" />
               <NavLink to="/attendance" label="Attendance" />
+              <NavLink to="/evaluations" label="Evaluations" />
               <NavLink to="/reports" label="Reports" />
             </div>
 
@@ -108,6 +109,7 @@ export function AppLayout() {
               <NavLink to="/events" label="Events" onClick={() => setMobileMenuOpen(false)} />
               <NavLink to="/registrations" label="Registrations" onClick={() => setMobileMenuOpen(false)} />
               <NavLink to="/attendance" label="Attendance" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink to="/evaluations" label="Evaluation" onClick={() => setMobileMenuOpen(false)} />
               <NavLink to="/reports" label="Reports" onClick={() => setMobileMenuOpen(false)} />
               {isAuthenticated ? (
                 <button

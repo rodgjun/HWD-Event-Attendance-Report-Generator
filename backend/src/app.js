@@ -7,6 +7,7 @@ import { registerModels, syncDb, Admin } from './core/models.js';
 import { errorMiddleware } from './core/error-middleware.js';
 import { authRouter } from './features/auth/auth.routes.js';
 import { eventsRouter } from './features/events/events.routes.js';
+import { evaluationsRouter } from './features/evaluations/evaluations.routes.js';
 import { registrationsRouter } from './features/registrations/registrations.routes.js';
 import { attendanceRouter } from './features/attendance/attendance.routes.js';
 import { reportsRouter } from './features/reports/reports.routes.js';
@@ -38,7 +39,7 @@ if (adminCount === 0) {
 }
 
 app.get('/api', (_req, res) => {
-  res.json({ ok: true, name: 'HWD API', routes: ['/api/health', '/api/auth/login', '/api/events', '/api/registrations', '/api/attendance', '/api/reports'] });
+  res.json({ ok: true, name: 'HWD API', routes: ['/api/health', '/api/auth/login', '/api/events', '/api/evaluations', '/api/registrations', '/api/attendance', '/api/reports'] });
 });
 
 app.get('/api/health', (_req, res) => {
@@ -47,6 +48,9 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/events', eventsRouter);
+app.use('/api/evaluations', evaluationsRouter);
+app.use(express.static('public'));
+
 app.use('/api/registrations', registrationsRouter);
 app.use('/api/attendance', attendanceRouter);
 app.use('/api/reports', reportsRouter);

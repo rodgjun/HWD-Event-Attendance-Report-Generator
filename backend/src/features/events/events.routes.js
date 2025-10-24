@@ -19,37 +19,64 @@ eventsRouter.get('/', requireAuth, async (req, res, next) => {
       order = 'DESC', 
       type,
       name,
-      date
+      date,
+      search  // New: unified search param
     } = req.query;
-    const offset = (page - 1) * limit;
+    const offset = (Number(page) - 1) * Number(limit);
     
     const where = {};
+    
+    // Handle separate filters
     if (type) where.event_type = { [Op.like]: `%${type}%` };
     if (name) where.event_name = { [Op.like]: `%${name}%` };
     if (date) where.event_date = { [Op.eq]: date };
     
+    // Handle unified search: OR across name and type (case-insensitive)
+    if (search) {
+      where[Op.or] = [
+        { event_name: { [Op.iLike]: `%${search}%` } },
+        { event_type: { [Op.iLike]: `%${search}%` } }
+      ];
+      console.log(`Search query: "${search}" (filtered ${res.locals.eventCount || 'N/A'} events)`); // Optional logging
+    }
+    
     const { count, rows } = await Event.findAndCountAll({
       where,
       order: [[sort, order.toUpperCase()]],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit: Number(limit),
+      offset
     });
     
     res.json({
       events: rows,
       pagination: {
         total: count,
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: Number(page),
+        limit: Number(limit),
         totalPages: Math.ceil(count / limit)
       }
     });
   } catch (e) {
+    console.error('GET /events error:', e);
+    next(e);
+  }
+});
+
+// New non-paginated route for dropdown/full list
+eventsRouter.get('/all', requireAuth, async (req, res, next) => {
+  try {
+    const events = await Event.findAll({
+      order: [['event_name', 'ASC']] // Alphabetical for UX
+    });
+    res.json({ events });
+  } catch (e) {
+    console.error('GET /events/all error:', e);
     next(e);
   }
 });
 
 
+// Deprecated: Use GET /?search= instead (remove in v2)
 eventsRouter.get('/search', requireAuth, async (req, res, next) => {
   try {
     const { type, name } = req.query;
@@ -63,13 +90,12 @@ eventsRouter.get('/search', requireAuth, async (req, res, next) => {
   }
 });
 
-
 eventsRouter.post(
   '/',
   requireAuth,
   [
-    body('event_type').isString().notEmpty(),
-    body('event_name').isString().notEmpty(),
+    body('event_type').isString().notEmpty().trim(),
+    body('event_name').isString().notEmpty().trim(),
     body('event_date').isDate({ format: 'YYYY-MM-DD' }),
   ],
   async (req, res, next) => {
@@ -80,19 +106,23 @@ eventsRouter.post(
       // Check for duplicate event
       const existingEvent = await Event.findOne({
         where: {
-          event_type: req.body.event_type,
-          event_name: req.body.event_name
+          event_type: req.body.event_type.trim(),
+          event_name: req.body.event_name.trim()
         }
       });
       
       if (existingEvent) {
         return res.status(409).json({ 
           error: 'Duplicate event found', 
-          details: `Event "${req.body.event_name}" of type "${req.body.event_type}" already exists` 
+          details: `Event "${req.body.event_name.trim()}" of type "${req.body.event_type.trim()}" already exists` 
         });
       }
       
-      const created = await Event.create(req.body);
+      const created = await Event.create({
+        event_type: req.body.event_type.trim(),
+        event_name: req.body.event_name.trim(),
+        event_date: req.body.event_date
+      });
       res.status(201).json(created);
     } catch (e) {
       if (e.name === 'SequelizeUniqueConstraintError') {
@@ -110,8 +140,8 @@ eventsRouter.put(
   '/:id',
   requireAuth,
   [
-    body('event_type').optional().isString(),
-    body('event_name').optional().isString(),
+    body('event_type').optional().isString().trim(),
+    body('event_name').optional().isString().trim(),
     body('event_date').optional().isDate({ format: 'YYYY-MM-DD' }),
   ],
   async (req, res, next) => {
@@ -121,11 +151,17 @@ eventsRouter.put(
       const event = await Event.findByPk(req.params.id);
       if (!event) return res.status(404).json({ error: 'Event not found' });
       
+      const updateData = {
+        event_type: req.body.event_type ? req.body.event_type.trim() : event.event_type,
+        event_name: req.body.event_name ? req.body.event_name.trim() : event.event_name,
+        ...(req.body.event_date && { event_date: req.body.event_date })
+      };
+      
       // Check for duplicate (excluding current)
       const existingEvent = await Event.findOne({
         where: {
-          event_type: req.body.event_type || event.event_type,
-          event_name: req.body.event_name || event.event_name,
+          event_type: updateData.event_type,
+          event_name: updateData.event_name,
           event_id: { [Op.ne]: req.params.id }
         }
       });
@@ -133,11 +169,11 @@ eventsRouter.put(
       if (existingEvent) {
         return res.status(409).json({ 
           error: 'Duplicate event found', 
-          details: `Event "${req.body.event_name || event.event_name}" of type "${req.body.event_type || event.event_type}" already exists` 
+          details: `Event "${updateData.event_name}" of type "${updateData.event_type}" already exists` 
         });
       }
       
-      await event.update(req.body);
+      await event.update(updateData);
       res.json(event);
     } catch (e) {
       next(e);
@@ -158,10 +194,9 @@ eventsRouter.delete('/:id', requireAuth, async (req, res, next) => {
 
 // Helper to parse Excel/CSV dates (handles string, number, empty)
 function parseExcelDate(cell) {
-  if (!cell) return new Date();
+  if (!cell || cell === '') return null;  // Explicit null for invalid/empty
 
   if (typeof cell === 'string') {
-    // Trim and try native parse first (handles YYYY-MM-DD)
     const trimmed = cell.trim();
     const d = new Date(trimmed);
     if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
@@ -170,7 +205,7 @@ function parseExcelDate(cell) {
     // Manual parse for MM/DD/YYYY or DD-MM-YYYY
     const parts = trimmed.split(/[-\/]/);
     if (parts.length === 3) {
-      const nums = parts.map(p => parseInt(p, 10));
+      const nums = parts.map(p => parseInt(p.trim(), 10));
       if (!isNaN(nums[0]) && !isNaN(nums[1]) && !isNaN(nums[2])) {
         // Guess format: if first part > 12, assume YYYY; else MM/DD/YYYY
         if (nums[0] > 31) {  // Likely YYYY
@@ -200,20 +235,24 @@ eventsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res
     const created = [];
     const skipped = [];
     for (const row of rows) {
-      const event_type = row['Event Type'] || null;
-      const event_name = row['Event Name'] || null;
+      const event_type = (row['Event Type'] || '').trim();
+      const event_name = (row['Event Name'] || '').trim();
       const event_date_raw = row['Event Date'];
       const event_date = parseExcelDate(event_date_raw);
 
       // Skip if required fields missing/invalid
-      if (!event_type || !event_name || !event_date) {
+      let reason = '';
+      if (!event_type) reason = 'Missing event type';
+      else if (!event_name) reason = 'Missing event name';
+      else if (!event_date) reason = 'Invalid event date';
+      if (reason) {
         skipped.push({
-          type: event_type,
-          name: event_name,
-          date: event_date_raw,
-          reason: !event_date ? 'Invalid date' : 'Missing type/name'
+          event_type,
+          event_name,
+          reason,  // Descriptive reason
+          date_raw: event_date_raw  // For debugging
         });
-        console.warn(`Skipping invalid row: ${event_type} - ${event_name} (${event_date_raw})`);
+        console.warn(`Skipping invalid row: ${reason} - ${event_type} - ${event_name} (${event_date_raw})`);
         continue;
       }
 
@@ -225,6 +264,11 @@ eventsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res
         }
       });
       if (existing) {
+        skipped.push({
+          event_type,
+          event_name,
+          reason: `Duplicate event "${event_name}" of type "${event_type}"`
+        });
         console.warn(`Skipping duplicate: ${event_type} - ${event_name}`);
         continue;
       }
@@ -232,14 +276,14 @@ eventsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res
       const record = await Event.create({
         event_type,
         event_name,
-        event_date  // Now guaranteed YYYY-MM-DD or skipped
+        event_date
       });
       created.push(record);
     }
     const response = { inserted: created.length };
     if (skipped.length > 0) {
       response.skipped = skipped.length;
-      response.skip_details = skipped;  // Optional: for debugging
+      response.skip_details = skipped;  // Includes event_name, event_type, reason for frontend display
     }
     res.json(response);
   } catch (e) {
@@ -249,6 +293,7 @@ eventsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res
         details: 'One or more records violate unique constraints on type/name' 
       });
     }
+    console.error('POST /events/upload error:', e);
     next(e);
   }
 });

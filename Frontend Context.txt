@@ -3,7 +3,11 @@ Frontend Context
 Attendance.tsx
 `
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
+import { Toaster, toast } from 'react-hot-toast';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowUpTrayIcon, ChevronDownIcon, ChevronUpIcon, PlayIcon } from '@heroicons/react/24/outline';
 
 type AttendanceRow = { 
   attendance_id: number; 
@@ -20,30 +24,33 @@ type EventOption = { event_id: number; event_name: string };
 type DepartmentOption = string;
 
 export function Attendance() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<AttendanceRow[]>([]);
   const [events, setEvents] = useState<EventOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
-  const [form, setForm] = useState({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
+  const [form, setForm] = useState<{ employee_no: string; employee_name: string; department: string; mode_of_attendance: 'Virtual' | 'Onsite'; event_name: string }>({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
   const [editingAttendance, setEditingAttendance] = useState<AttendanceRow | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(true);
+  const [showFormSection, setShowFormSection] = useState(false);
   
   // Pagination and filtering state
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [filters, setFilters] = useState({ 
-    event_name: '', 
-    employee_no: '', 
-    employee_name: '', 
-    department: ''
-  });
+  const [filters, setFilters] = useState({ event_name: '', employee_no: '', employee_name: '', department: '' });
   const [sorting, setSorting] = useState({ sort: 'attendance_id', order: 'DESC' });
+
+  useEffect(() => {
+    loadEvents();
+    loadDepartments();
+    load();
+  }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
 
   async function loadEvents() {
     try {
-      const res = await api.get('/events'); // Assumes /events returns { events: [...] }
+      const res = await api.get('/events');
       setEvents(res.data.events || []);
     } catch (e: any) {
-      console.error('Failed to load events:', e);
-      setError('Failed to load events for autocomplete');
+      toast.error('Failed to load events');
     }
   }
 
@@ -52,8 +59,7 @@ export function Attendance() {
       const res = await api.get('/attendance/departments');
       setDepartments(res.data);
     } catch (e: any) {
-      console.error('Failed to load departments:', e);
-      setError('Failed to load departments for autocomplete');
+      toast.error('Failed to load departments');
     }
   }
 
@@ -75,29 +81,22 @@ export function Attendance() {
       setRows(res.data.attendance);
       setPagination(res.data.pagination);
     } catch (e: any) {
-      console.error('Failed to load attendance:', e);
-      setError(e.response?.data?.error || 'Failed to load attendance');
+      toast.error(e.response?.data?.error || 'Failed to load attendance');
     }
   }
   
-  useEffect(() => { 
-    loadEvents();
-    loadDepartments();
-    load(); 
-  }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
-
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
     try {
-      setError(null);
       await api.post('/attendance/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      toast.success('File uploaded successfully');
+      e.target.value = '';
       await load();
     } catch (e: any) {
-      console.error('Failed to upload file:', e);
-      setError(e.response?.data?.error || 'Failed to upload file');
+      toast.error(e.response?.data?.error || 'Failed to upload file');
     }
   }
 
@@ -105,33 +104,7 @@ export function Attendance() {
     e.preventDefault();
     const trimmedName = form.employee_name.trim();
     if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
-      setError('Employee Name is required for walk-in attendance');
-      return;
-    }
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),  // Empty → backend to 'NA'
-      employee_name: trimmedName || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
-    try {
-      setError(null);
-      await api.post('/attendance', payload);
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-      await load();
-    } catch (e: any) {
-      console.error('Failed to create attendance:', e);
-      setError(e.response?.data?.error || (e.response?.data?.details ? `Validation error: ${JSON.stringify(e.response.data.details)}` : 'Failed to create attendance'));
-    }
-  }
-
-  async function updateAttendance(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingAttendance) return;
-    const trimmedName = form.employee_name.trim();
-    if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
-      setError('Employee Name is required for walk-in attendance');
+      toast.error('Employee Name is required for walk-in attendance');
       return;
     }
     const payload = { 
@@ -142,26 +115,52 @@ export function Attendance() {
       event_name: form.event_name.trim()
     };
     try {
-      setError(null);
-      await api.put(`/attendance/${editingAttendance.attendance_id}`, payload);
-      setEditingAttendance(null);
+      await api.post('/attendance', payload);
+      toast.success('Attendance added successfully');
       setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
+      setEditingAttendance(null);
+      setShowFormSection(false);
       await load();
     } catch (e: any) {
-      console.error('Failed to update attendance:', e);
-      setError(e.response?.data?.error || (e.response?.data?.details ? `Validation error: ${JSON.stringify(e.response.data.details)}` : 'Failed to update attendance'));
+      toast.error(e.response?.data?.error || 'Failed to create attendance');
+    }
+  }
+
+  async function updateAttendance(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingAttendance) return;
+    const trimmedName = form.employee_name.trim();
+    if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
+      toast.error('Employee Name is required for walk-in attendance');
+      return;
+    }
+    const payload = { 
+      ...form, 
+      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),
+      employee_name: trimmedName || null,
+      department: form.department.trim() || null,
+      event_name: form.event_name.trim()
+    };
+    try {
+      await api.put(`/attendance/${editingAttendance.attendance_id}`, payload);
+      toast.success('Attendance updated successfully');
+      setEditingAttendance(null);
+      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
+      setShowFormSection(false);
+      await load();
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Failed to update attendance');
     }
   }
 
   async function deleteAttendance(id: number) {
-    if (!confirm('Are you sure you want to delete this attendance record?')) return;
+    if (!confirm('Are you sure?')) return;
     try {
-      setError(null);
       await api.delete(`/attendance/${id}`);
+      toast.success('Attendance deleted');
       await load();
     } catch (e: any) {
-      console.error('Failed to delete attendance:', e);
-      setError('Failed to delete attendance');
+      toast.error('Failed to delete attendance');
     }
   }
 
@@ -174,13 +173,13 @@ export function Attendance() {
       mode_of_attendance: attendance.mode_of_attendance,
       event_name: attendance.event?.event_name || ''
     });
-    setError(null);
+    setShowFormSection(true);
   }
 
   function cancelEdit() {
     setEditingAttendance(null);
     setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-    setError(null);
+    setShowFormSection(false);
   }
 
   function handleSort(field: string) {
@@ -188,171 +187,114 @@ export function Attendance() {
     setSorting({ sort: field, order: newOrder });
   }
 
-  // Error display component
-  const ErrorAlert = () => error ? (
-    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-      {error}
-    </div>
-  ) : null;
+  const handleKioskLaunch = () => {
+    navigate('/kiosk');
+  };
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Attendance</h2>
-      
-      <ErrorAlert />
-      
-      {/* Filters */}
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <h3 className="text-lg font-medium mb-3">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Event Name" 
-              value={filters.event_name} 
-              onChange={e => setFilters({ ...filters, event_name: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Employee No</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Employee No" 
-              value={filters.employee_no} 
-              onChange={e => setFilters({ ...filters, employee_no: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Employee Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Employee Name" 
-              value={filters.employee_name} 
-              onChange={e => setFilters({ ...filters, employee_name: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Department</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Department" 
-              value={filters.department} 
-              onChange={e => setFilters({ ...filters, department: e.target.value })} 
-            />
-          </div>
-        </div>
+      <Toaster position="top-right" />
+      {/* Top Bar */}
+      <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
+        <h2 className="text-2xl font-bold text-gray-900">Attendance Management</h2>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          onClick={handleKioskLaunch}
+          className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors"
+        >
+          Launch Kiosk Mode
+        </motion.button>
       </div>
-      
+
+      {/* Collapsible Filters */}
+      <motion.details open={showFilters} className="bg-white p-4 rounded-lg shadow-sm">
+        <summary className="cursor-pointer flex items-center justify-between font-medium text-gray-900">
+          Filters {showFilters ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
+        </summary>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
+          <input className="border p-2 rounded" placeholder="Event Name" value={filters.event_name} onChange={e => setFilters({ ...filters, event_name: e.target.value })} />
+          <input className="border p-2 rounded" placeholder="Employee No" value={filters.employee_no} onChange={e => setFilters({ ...filters, employee_no: e.target.value })} />
+          <input className="border p-2 rounded" placeholder="Employee Name" value={filters.employee_name} onChange={e => setFilters({ ...filters, employee_name: e.target.value })} />
+          <input className="border p-2 rounded" placeholder="Department" value={filters.department} onChange={e => setFilters({ ...filters, department: e.target.value })} />
+        </div>
+      </motion.details>
+
       {/* Import Section */}
-      <div className="flex items-center gap-3">
+      <div className="bg-white p-4 rounded-lg shadow-sm flex items-center gap-3">
+        <ArrowUpTrayIcon className="w-5 h-5" />
         <label className="text-sm font-medium">Import Attendance:</label>
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={upload} className="border p-2 rounded" />
+        <input type="file" accept=".xlsx,.xls,.csv" onChange={upload} className="border p-2 rounded file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50" />
       </div>
-      
-      {/* Add/Edit Form */}
-      <form onSubmit={editingAttendance ? updateAttendance : submit} className="grid grid-cols-5 gap-3 items-end">
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Employee No (optional)" 
-          value={form.employee_no} 
-          onChange={e => setForm({ ...form, employee_no: e.target.value })} 
-        />
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Employee Name" 
-          value={form.employee_name} 
-          onChange={e => setForm({ ...form, employee_name: e.target.value })} 
-          required={form.employee_no.trim() === ''}
-        />
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Department" 
-          list="departments-list"
-          value={form.department} 
-          onChange={e => setForm({ ...form, department: e.target.value })} 
-        />
-        <datalist id="departments-list">
-          {departments.map(dept => <option key={dept} value={dept} />)}
-        </datalist>
-        <select className="border p-2 rounded" value={form.mode_of_attendance} onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as any })}>
-          <option>Onsite</option>
-          <option>Virtual</option>
-        </select>
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Event Name" 
-          list="events-list"
-          value={form.event_name} 
-          onChange={e => setForm({ ...form, event_name: e.target.value })} 
-          required
-        />
-        <datalist id="events-list">
-          {events.map(event => <option key={event.event_id} value={event.event_name} />)}
-        </datalist>
-        <div className="flex gap-2 col-span-5">
-          <button className="bg-blue-600 text-white px-4 py-2 rounded" type="submit">
-            {editingAttendance ? 'Update' : 'Add'} Attendance
-          </button>
-          {editingAttendance && (
-            <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded">
-              Cancel
-            </button>
-          )}
-        </div>
-      </form>
-      
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
-            <tr className="bg-gray-100 text-left">
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('attendance_id')}>
-                ID {sorting.sort === 'attendance_id' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_no')}>
-                Emp No {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_name')}>
-                Name {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('department')}>
-                Dept {sorting.sort === 'department' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border">Event Name</th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('mode_of_attendance')}>
-                Mode {sorting.sort === 'mode_of_attendance' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('validation_status')}>
-                Status {sorting.sort === 'validation_status' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border">Actions</th>
+
+      {/* Collapsible Add/Edit Form */}
+      <div className="bg-white p-4 rounded-lg shadow-sm">
+      <button
+        onClick={() => setShowFormSection(!showFormSection)}
+        className="w-full flex items-center justify-between font-medium text-gray-900 py-2"
+      >
+        {editingAttendance ? 'Edit' : 'Add New Record'}
+        {showFormSection ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
+      </button>
+      <AnimatePresence>
+        {showFormSection && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-4 overflow-hidden"
+          >
+            <form onSubmit={editingAttendance ? updateAttendance : submit} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+              <input className="border p-2 rounded" placeholder="Employee No (optional)" value={form.employee_no} onChange={e => setForm({ ...form, employee_no: e.target.value })} />
+              <input className="border p-2 rounded" placeholder="Employee Name" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} required={form.employee_no.trim() === ''} />
+              <input className="border p-2 rounded" placeholder="Department" list="departments-list" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} />
+              <datalist id="departments-list">{departments.map(dept => <option key={dept} value={dept} />)}</datalist>
+              <select className="border p-2 rounded" value={form.mode_of_attendance} onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as any })}>
+                <option>Onsite</option>
+                <option>Virtual</option>
+              </select>
+              <input className="border p-2 rounded" placeholder="Event Name" list="events-list" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} required />
+              <datalist id="events-list">{events.map(event => <option key={event.event_id} value={event.event_name} />)}</datalist>
+              <div className="flex gap-2 col-span-5">
+                <button className="bg-blue-600 text-white px-4 py-2 rounded flex-1" type="submit">
+                  {editingAttendance ? 'Update' : 'Add'} Attendance
+                </button>
+                {editingAttendance && <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded flex-1">Cancel</button>}
+              </div>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+      {/* Table with Sticky Header */}
+      <div className="overflow-x-auto bg-white rounded-lg shadow-sm">
+        <table className="min-w-full">
+          <thead className="bg-gray-100 sticky top-0">
+            <tr className="text-left">
+              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('attendance_id')}>ID {sorting.sort === 'attendance_id' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
+              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_no')}>Emp No {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
+              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_name')}>Name {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
+              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('department')}>Dept {sorting.sort === 'department' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
+              <th className="p-3">Mode</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Event</th>
+              <th className="p-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(r => (
-              <tr key={r.attendance_id}>
-                <td className="p-2 border">{r.attendance_id}</td>
-                <td className="p-2 border">{r.employee_no === 'NA' ? 'N/A' : (r.employee_no || 'N/A')}</td>
-                <td className="p-2 border">{r.employee_name || 'N/A'}</td>
-                <td className="p-2 border">{r.department || 'N/A'}</td>
-                <td className="p-2 border">{r.event?.event_name || 'N/A'}</td>
-                <td className="p-2 border">{r.mode_of_attendance}</td>
-                <td className="p-2 border">{r.validation_status}</td>
-                <td className="p-2 border">
+              <tr key={r.attendance_id} className="border-t hover:bg-gray-50">
+                <td className="p-3">{r.attendance_id}</td>
+                <td className="p-3">{r.employee_no || 'N/A'}</td>
+                <td className="p-3">{r.employee_name || 'N/A'}</td>
+                <td className="p-3">{r.department || 'N/A'}</td>
+                <td className="p-3">{r.mode_of_attendance}</td>
+                <td className="p-3"><span className={`px-2 py-1 rounded text-xs ${r.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{r.validation_status}</span></td>
+                <td className="p-3">{r.event?.event_name || 'N/A'}</td>
+                <td className="p-3">
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => startEdit(r)}
-                      className="bg-blue-500 text-white px-2 py-1 rounded text-sm hover:bg-blue-600"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteAttendance(r.attendance_id)}
-                      className="bg-red-500 text-white px-2 py-1 rounded text-sm hover:bg-red-600"
-                    >
-                      Delete
-                    </button>
+                    <button onClick={() => startEdit(r)} className="bg-blue-500 text-white px-2 py-1 rounded text-sm">Edit</button>
+                    <button onClick={() => deleteAttendance(r.attendance_id)} className="bg-red-500 text-white px-2 py-1 rounded text-sm">Delete</button>
                   </div>
                 </td>
               </tr>
@@ -360,289 +302,236 @@ export function Attendance() {
           </tbody>
         </table>
       </div>
-      
+
       {/* Pagination */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm">
         <div className="text-sm text-gray-600">
-          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} attendance
+          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
-            disabled={pagination.page <= 1}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Previous
-          </button>
-          <span className="px-3 py-1">
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
-          <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
-            disabled={pagination.page >= pagination.totalPages}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next
-          </button>
+          <button disabled={pagination.page <= 1} onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })} className="px-3 py-1 border rounded disabled:opacity-50">Previous</button>
+          <span>Page {pagination.page} of {pagination.totalPages}</span>
+          <button disabled={pagination.page >= pagination.totalPages} onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
         </div>
       </div>
     </div>
   );
-}
+}`
 
-`
 
 Events.tsx
 `
 import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../services/api';
+import { toast } from 'react-hot-toast';
+import { XMarkIcon, MagnifyingGlassIcon, PlusIcon, PencilIcon, TrashIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 type Event = { event_id: number; event_type: string; event_name: string; event_date: string };
+
+type Pagination = { total: number; page: number; limit: number; totalPages: number };
+
+type UploadResult = { inserted: number; skipped?: number; skip_details?: Array<{ reason: string; event_name?: string; event_type?: string }> };
 
 export function Events() {
   const [events, setEvents] = useState<Event[]>([]);
   const [form, setForm] = useState({ event_type: '', event_name: '', event_date: '' });
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  
-  // Pagination and filtering state
-  const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [filters, setFilters] = useState({ type: '', name: '', date: '' });
-  const [sorting, setSorting] = useState({ sort: 'event_date', order: 'DESC' });
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: 10, totalPages: 0 });
+  const [showUploadResult, setShowUploadResult] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
 
-  async function load() {
-    setLoading(true);
-    setError('');
+  useEffect(() => {
+    loadEvents();
+  }, [pagination.page, pagination.limit, search]);
+
+  async function loadEvents() {
     try {
+      setError(null);
       const params = new URLSearchParams({
         page: pagination.page.toString(),
         limit: pagination.limit.toString(),
-        sort: sorting.sort,
-        order: sorting.order,
-        ...(filters.type && { type: filters.type }),
-        ...(filters.name && { name: filters.name }),
-        ...(filters.date && { date: filters.date })
+        ...(search && { search: search.toLowerCase() })
       });
-      
       const res = await api.get(`/events?${params}`);
-      setEvents(res.data.events);
-      setPagination(res.data.pagination);
+      setEvents(res.data.events || []);
+      setPagination(res.data.pagination || { total: 0, page: 1, limit: 10, totalPages: 0 });
     } catch (e: any) {
-      const status = e?.response?.status;
-      if (status === 401) setError('Unauthorized. Please login first.');
-      else setError(e?.response?.data?.error || 'Failed to load events. Check API URL and server.');
-      setEvents([]);
+      setError('Failed to load events');
+      toast.error('Failed to load events');
+    }
+  }
+
+  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.post('/events/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      e.target.value = '';
+      setUploadResult(res.data);
+      setShowUploadResult(true);
+      toast.success(`Upload completed: ${res.data.inserted} events added`);
+      loadEvents();
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to upload file');
+      toast.error('Upload failed');
     } finally {
       setLoading(false);
     }
   }
-  
-  useEffect(() => { load(); }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.type, filters.name, filters.date]);
+
+  function openModal(event?: Event) {
+    if (event) {
+      setEditingEvent(event);
+      setForm({
+        event_type: event.event_type,
+        event_name: event.event_name,
+        event_date: event.event_date.split('T')[0] // Format for input
+      });
+    } else {
+      setEditingEvent(null);
+      setForm({ event_type: '', event_name: '', event_date: '' });
+    }
+    setIsModalOpen(true);
+  }
+
+  function closeModal() {
+    setIsModalOpen(false);
+    setEditingEvent(null);
+    setForm({ event_type: '', event_name: '', event_date: '' });
+    setError(null);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.event_type || !form.event_name || !form.event_date) return;
+    if (!form.event_name.trim() || !form.event_type.trim() || !form.event_date.trim()) {
+      toast.error('All fields are required');
+      return;
+    }
     try {
-      await api.post('/events', form);
-      setForm({ event_type: '', event_name: '', event_date: '' });
-      await load();
+      setError(null);
+      if (editingEvent) {
+        await api.put(`/events/${editingEvent.event_id}`, form);
+        toast.success('Event updated successfully');
+      } else {
+        await api.post('/events', form);
+        toast.success('Event added successfully');
+      }
+      closeModal();
+      loadEvents();
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to create event');
+      setError(e.response?.data?.error || 'Failed to save event');
+      toast.error(e.response?.data?.error || 'Failed to save event');
     }
   }
 
-  async function updateEvent(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingEvent || !form.event_type || !form.event_name || !form.event_date) return;
-    try {
-      await api.put(`/events/${editingEvent.event_id}`, form);
-      setEditingEvent(null);
-      setForm({ event_type: '', event_name: '', event_date: '' });
-      await load();
-    } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to update event');
-    }
+  function handlePageChange(newPage: number) {
+    setPagination({ ...pagination, page: newPage });
   }
 
-  async function deleteEvent(id: number) {
-    if (!confirm('Are you sure you want to delete this event?')) return;
-    try {
-      await api.delete(`/events/${id}`);
-      await load();
-    } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to delete event');
-    }
+  function handleLimitChange(newLimit: number) {
+    setPagination({ ...pagination, page: 1, limit: newLimit });
   }
 
-  function startEdit(event: Event) {
-    setEditingEvent(event);
-    setForm({ event_type: event.event_type, event_name: event.event_name, event_date: event.event_date });
-  }
+  const ErrorAlert = () => error ? (
+    <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm mb-4 transition-all">
+      {error}
+    </div>
+  ) : null;
 
-  function cancelEdit() {
-    setEditingEvent(null);
-    setForm({ event_type: '', event_name: '', event_date: '' });
-  }
-
-  function handleSort(field: string) {
-    const newOrder = sorting.sort === field && sorting.order === 'ASC' ? 'DESC' : 'ASC';
-    setSorting({ sort: field, order: newOrder });
-  }
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Events</h2>
-      {error && <div className="text-sm text-red-600">{error}</div>}
-      {loading && <div className="text-sm text-gray-600">Loading...</div>}
-      
-      {/* Filters */}
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <h3 className="text-lg font-medium mb-3">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Type</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by event type" 
-              value={filters.type} 
-              onChange={e => setFilters({ ...filters, type: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by event name" 
-              value={filters.name} 
-              onChange={e => setFilters({ ...filters, name: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Date</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              type="date" 
-              value={filters.date} 
-              onChange={e => setFilters({ ...filters, date: e.target.value })} 
-            />
-          </div>
-        </div>
-      </div>
-      
-      {/* Import Section */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium">Import Events (CSV/XLSX):</label>
-        <input
-          type="file"
-          accept=".xlsx,.xls,.csv"
-          onChange={async e => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            setUploading(true);
-            try {
-              const formData = new FormData();
-              formData.append('file', file);
-              await api.post('/events/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-              await load();
-            } catch (e: any) {
-              setError(e?.response?.data?.error || 'Failed to upload file');
-            } finally {
-              setUploading(false);
-            }
-          }}
-          className="border p-2 rounded"
-        />
-        {uploading && <span className="text-sm text-gray-600">Uploading...</span>}
-      </div>
-      
-      {/* Add/Edit Form */}
-      <form onSubmit={editingEvent ? updateEvent : submit} className="grid grid-cols-4 gap-3 items-end">
-        <input className="border p-2 rounded" placeholder="Event Type" value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })} />
-        <input className="border p-2 rounded" placeholder="Event Name" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} />
-        <input className="border p-2 rounded" type="date" value={form.event_date} onChange={e => setForm({ ...form, event_date: e.target.value })} />
-        <div className="flex gap-2">
-          <button className="bg-blue-600 text-white px-4 py-2 rounded">
-            {editingEvent ? 'Update' : 'Add'}
-          </button>
-          {editingEvent && (
-            <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded">
-              Cancel
+  const UploadResultModal = ({ isOpen, onClose, result }: { isOpen: boolean; onClose: () => void; result: UploadResult | null }) => (
+    <AnimatePresence>
+      {isOpen && result && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-25 p-4"
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2">
+                <CheckCircleIcon className="w-6 h-6 text-green-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Upload Summary</h3>
+              </div>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                <XMarkIcon className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              <p className="text-green-600 font-medium">✅ {result.inserted} events added successfully</p>
+              {result.skipped && result.skipped > 0 && (
+                <>
+                  <p className="text-yellow-600 font-medium flex items-center gap-1">
+                    <ExclamationTriangleIcon className="w-5 h-5" />
+                    {result.skipped} events skipped (duplicates/errors)
+                  </p>
+                  {result.skip_details && result.skip_details.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-sm text-gray-700 bg-yellow-50 p-3 rounded-md">
+                      {result.skip_details.map((detail, idx) => (
+                        <li key={idx} className="flex items-center gap-2">
+                          • {detail.reason} {detail.event_name && `(Event: ${detail.event_name})`}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </div>
+            <button
+              onClick={onClose}
+              className="w-full mt-4 bg-gray-600 text-white py-2 rounded-md font-semibold hover:bg-gray-700 transition-colors"
+            >
+              Close
             </button>
-          )}
-        </div>
-      </form>
-      
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
-            <tr className="bg-gray-100 text-left">
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_id')}>
-                ID {sorting.sort === 'event_id' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_type')}>
-                Type {sorting.sort === 'event_type' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_name')}>
-                Name {sorting.sort === 'event_name' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('event_date')}>
-                Date {sorting.sort === 'event_date' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map(ev => (
-              <tr key={ev.event_id}>
-                <td className="p-2 border">{ev.event_id}</td>
-                <td className="p-2 border">{ev.event_type}</td>
-                <td className="p-2 border">{ev.event_name}</td>
-                <td className="p-2 border">{new Date(ev.event_date).toLocaleDateString()}</td>
-                <td className="p-2 border">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => startEdit(ev)}
-                      className="bg-blue-500 text-white px-2 py-1 rounded text-sm hover:bg-blue-600"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteEvent(ev.event_id)}
-                      className="bg-red-500 text-white px-2 py-1 rounded text-sm hover:bg-red-600"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
+  const PaginationControls = () => (
+    <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-6">
+      <div className="text-sm text-gray-700">
+        Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} events
       </div>
-      
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">
-          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} events
-        </div>
-        <div className="flex gap-2">
+      <div className="flex items-center gap-2">
+        <select
+          value={pagination.limit}
+          onChange={(e) => handleLimitChange(Number(e.target.value))}
+          className="border border-gray-300 rounded-md px-2 py-1 text-sm"
+        >
+          <option value={10}>10 per page</option>
+          <option value={25}>25 per page</option>
+          <option value={50}>50 per page</option>
+        </select>
+        <div className="flex items-center gap-1">
           <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
-            disabled={pagination.page <= 1}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => handlePageChange(pagination.page - 1)}
+            disabled={pagination.page === 1}
+            className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50"
           >
             Previous
           </button>
-          <span className="px-3 py-1">
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
+          <span className="px-3 py-1 text-sm font-medium">{pagination.page} / {pagination.totalPages}</span>
           <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
-            disabled={pagination.page >= pagination.totalPages}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => handlePageChange(pagination.page + 1)}
+            disabled={pagination.page === pagination.totalPages}
+            className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50"
           >
             Next
           </button>
@@ -650,11 +539,176 @@ export function Events() {
       </div>
     </div>
   );
-}
 
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto p-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">Events Management</h2>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search events..."
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPagination({ ...pagination, page: 1 }); }}
+              className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 w-64 text-sm transition-colors"
+            />
+          </div>
+          <button
+            onClick={() => openModal()}
+            className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-700 transition-colors shadow-sm"
+            disabled={loading}
+            title="Add Event"
+          >
+            <PlusIcon className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
 
+      {/* Import Section */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+        <h3 className="text-lg font-medium mb-3 text-gray-900">Import Events</h3>
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-gray-700">Upload Events.csv or .xlsx:</label>
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={upload}
+            disabled={loading}
+            className="border border-gray-300 p-2 rounded-md file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 text-sm"
+          />
+          {loading && <span className="text-sm text-blue-600">Uploading...</span>}
+        </div>
+      </div>
 
-`
+      {/* Events List */}
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {events.map((event) => (
+          <div key={event.event_id} className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow border border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">{event.event_name}</h3>
+            <p className="text-sm text-gray-600 mb-2">{event.event_type}</p>
+            <p className="text-sm text-blue-600 font-medium">{new Date(event.event_date).toLocaleDateString()}</p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => openModal(event)}
+                className="text-blue-600 hover:text-blue-500 p-1 rounded transition-colors"
+                title="Edit"
+              >
+                <PencilIcon className="w-4 h-4" />
+              </button>
+              <button
+                onClick={async () => {
+                  if (confirm('Are you sure you want to delete this event?')) {
+                    await api.delete(`/events/${event.event_id}`);
+                    loadEvents();
+                    toast.success('Event deleted');
+                  }
+                }}
+                className="text-red-600 hover:text-red-500 p-1 rounded transition-colors"
+                title="Delete"
+              >
+                <TrashIcon className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {events.length === 0 && !loading && (
+        <p className="text-center text-gray-500 py-8 text-lg">No events yet. Add one to get started—it's quick and easy!</p>
+      )}
+      {pagination.total > 0 && <PaginationControls />}
+
+      {/* Add/Edit Event Modal */}
+      <AnimatePresence>
+        {isModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-25 p-4"
+            onClick={closeModal}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {editingEvent ? 'Edit Event' : 'Add New Event'}
+                </h3>
+                <button onClick={closeModal} className="text-gray-400 hover:text-gray-600">
+                  <XMarkIcon className="w-6 h-6" />
+                </button>
+              </div>
+
+              <ErrorAlert />
+
+              <form onSubmit={submit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
+                  <input
+                    type="text"
+                    value={form.event_type}
+                    onChange={(e) => setForm({ ...form, event_type: e.target.value })}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g., Wellness Seminar"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Name</label>
+                  <input
+                    type="text"
+                    value={form.event_name}
+                    onChange={(e) => setForm({ ...form, event_name: e.target.value })}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g., Yoga Session"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Date</label>
+                  <input
+                    type="date"
+                    value={form.event_date}
+                    onChange={(e) => setForm({ ...form, event_date: e.target.value })}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                <div className="flex space-x-3 pt-4">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    type="button"
+                    onClick={closeModal}
+                    className="flex-1 bg-gray-200 text-gray-800 py-2 rounded-md hover:bg-gray-300 transition-colors"
+                  >
+                    Cancel
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    type="submit"
+                    disabled={loading}
+                    className="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    {loading ? 'Saving...' : (editingEvent ? 'Update' : 'Add')} Event
+                  </motion.button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <UploadResultModal isOpen={showUploadResult} onClose={() => setShowUploadResult(false)} result={uploadResult} />
+    </div>
+  );
+}`
 
 Landing.tsx
 `
@@ -1441,12 +1495,16 @@ AppLayout.tsx
 `
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { Toaster } from 'react-hot-toast';
 
 export function AppLayout() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isAuthenticated = !!localStorage.getItem('token'); // Compute directly for real-time updates
+
+  // In AppLayout component, wrap navbar in conditional
+  const isKiosk = pathname === '/kiosk';
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -1470,7 +1528,7 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navbar */}
+      {!isKiosk && (
       <nav className="bg-white shadow-sm border-b border-gray-200 fixed w-full z-50">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
@@ -1566,16 +1624,14 @@ export function AppLayout() {
           )}
         </div>
       </nav>
-
-      {/* Main Content with Padding for Fixed Navbar */}
-      <main className="pt-20 mx-auto max-w-6xl p-4">
-        <Outlet />
-      </main>
+      )}
+    <main className={`mx-auto max-w-6xl p-4 ${isKiosk ? 'pt-0' : 'pt-20'}`}>
+      <Outlet />
+    </main>
+    <Toaster position="top-right" containerStyle={{ zIndex: 9999 }} />  {/* Global, high z-index for kiosk fullscreen */}
     </div>
   );
-}
-
-`
+}`
 
 main.tsx
 `
@@ -1614,4 +1670,181 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 
 
+`
+
+Kiosk.tsx
+`
+import { useEffect, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { api } from '../services/api';
+import { toast } from 'react-hot-toast';
+import { motion, AnimatePresence } from 'framer-motion';
+
+type EventOption = { event_id: number; event_name: string };
+type DepartmentOption = string;
+
+export function Kiosk() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [events, setEvents] = useState<EventOption[]>([]);
+  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<EventOption | null>(null);
+  type ModeOfAttendance = 'Onsite' | 'Virtual';
+  const [form, setForm] = useState<{ employee_no: string; employee_name: string; department: string; mode_of_attendance: ModeOfAttendance }>({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite' });
+  const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    loadEvents();
+    loadDepartments();
+    // Fullscreen on mount
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen();
+    }
+    // Exit on Esc
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') exitKiosk(); };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, []);
+
+  async function loadEvents() {
+    try {
+      const res = await api.get('/events');
+      setEvents(res.data.events || []);
+    } catch (e: any) {
+      toast.error('Failed to load events');
+    }
+  }
+
+  async function loadDepartments() {
+    try {
+      const res = await api.get('attendance/departments');
+      setDepartments(res.data);
+    } catch (e: any) {
+      toast.error('Failed to load departments');
+    }
+  }
+
+  async function handleEmployeeNoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const no = e.target.value.trim();
+    setForm({ ...form, employee_no: no });
+    if (no && no !== 'NA') {
+      try {
+        const res = await api.get(`/employees/by-number/${no}`);
+        setForm(prev => ({ ...prev, employee_name: res.data.employee_name || '', department: res.data.department || '' }));
+      } catch (e: any) {
+        if (e.response?.status === 404) {
+          setForm(prev => ({ ...prev, employee_name: '', department: '' }));  // Clear on not found
+        } else {
+          toast.error('Employee lookup failed');
+        }
+      }
+    } else {
+      setForm(prev => ({ ...prev, employee_name: '', department: '' }));  // Clear for manual/walk-in
+    }
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.employee_name.trim()) {
+      toast.error('Name is required');
+      return;
+    }
+    if (!selectedEvent) {
+      toast.error('Select an event');
+      return;
+    }
+    setLoading(true);
+    const payload = {
+      ...form,
+      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),
+      employee_name: form.employee_name.trim(),
+      department: form.department.trim() || null,
+      event_name: selectedEvent.event_name
+    };
+    try {
+      await api.post('/attendance', payload);
+      setSubmitted(true);
+      toast.success(`Thank you! Your attendance for ${selectedEvent.event_name} has been recorded.`);
+      setTimeout(() => {
+        setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite' });
+        setSubmitted(false);
+      }, 3000);
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Submission failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function exitKiosk() {
+    if (document.exitFullscreen) document.exitFullscreen();
+    navigate('/attendance');
+  }
+
+  const fadeIn = { hidden: { opacity: 0, scale: 0.95 }, visible: { opacity: 1, scale: 1, transition: { duration: 0.3 } } };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4 relative">
+      {/* Exit Button */}
+      <motion.button
+        onClick={exitKiosk}
+        className="absolute top-4 right-4 bg-red-600 text-white p-2 rounded-full shadow-lg"
+        whileHover={{ scale: 1.1 }}
+        aria-label="Exit Kiosk Mode"
+      >
+        ✕
+      </motion.button>
+
+      <AnimatePresence mode="wait">
+        {!selectedEvent ? (
+          <motion.div key="select" initial="hidden" animate="visible" exit="hidden" variants={fadeIn} className="text-center">
+            <h1 className="text-3xl font-bold text-gray-900 mb-8">Select Event for Kiosk</h1>
+            <select
+              onChange={e => setSelectedEvent(events.find(ev => ev.event_name === e.target.value) || null)}
+              className="border p-3 rounded-lg text-lg bg-white shadow-md"
+            >
+              <option value="">Choose an event...</option>
+              {events.map(ev => <option key={ev.event_id} value={ev.event_name}>{ev.event_name}</option>)}
+            </select>
+          </motion.div>
+        ) : submitted ? (
+          <motion.div key="success" initial="hidden" animate="visible" exit="hidden" variants={fadeIn} className="text-center">
+            <h1 className="text-4xl font-bold text-green-600 mb-4">✅ Thank You!</h1>
+            <p className="text-xl text-gray-600">Your attendance for {selectedEvent.event_name} has been recorded.</p>
+          </motion.div>
+        ) : (
+          <motion.form key="form" initial="hidden" animate="visible" exit="hidden" variants={fadeIn} onSubmit={submit} className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full space-y-6">
+            <h1 className="text-2xl font-bold text-center text-gray-900">{selectedEvent.event_name} Attendance Kiosk</h1>
+            <input className="w-full p-3 border rounded-lg" placeholder="Employee No (optional)" value={form.employee_no} onChange={handleEmployeeNoChange} />
+            <input className="w-full p-3 border rounded-lg" placeholder="Name *" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} required />
+            <input 
+              className="w-full p-3 border rounded-lg" 
+              placeholder="Department" 
+              list="departments-list" 
+              value={form.department} 
+              onChange={e => setForm({ ...form, department: e.target.value })} 
+            />
+            <datalist id="departments-list">
+              {departments.map(dept => <option key={dept} value={dept} />)}
+            </datalist>
+            <div className="flex gap-4">
+              <button type="button" onClick={() => setForm({ ...form, mode_of_attendance: 'Onsite' })} className={`flex-1 p-3 rounded-lg font-semibold ${form.mode_of_attendance === 'Onsite' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Onsite</button>
+              <button type="button" onClick={() => setForm({ ...form, mode_of_attendance: 'Virtual' })} className={`flex-1 p-3 rounded-lg font-semibold ${form.mode_of_attendance === 'Virtual' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>Virtual</button>
+            </div>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              type="submit"
+              disabled={loading}
+              className="w-full bg-blue-600 text-white py-4 rounded-lg font-bold text-lg disabled:opacity-50"
+            >
+              {loading ? 'Submitting...' : 'Submit Attendance'}
+            </motion.button>
+          </motion.form>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 `

@@ -10,6 +10,7 @@ import { Attendance } from './pages/Attendance';
 import { Reports } from './pages/Reports';
 import { Login } from './pages/Login';
 import { Kiosk } from './pages/Kiosk';
+import { Evaluations } from './pages/Evaluations';
 
 const router = createBrowserRouter([
   {
@@ -20,6 +21,7 @@ const router = createBrowserRouter([
       { path: 'events', element: <Events /> },
       { path: 'registrations', element: <Registrations /> },
       { path: 'attendance', element: <Attendance /> },
+      { path: 'evaluations', element: <Evaluations /> }, // New route
       { path: 'reports', element: <Reports /> },
       { path: 'login', element: <Login /> },
       // In createBrowserRouter children array

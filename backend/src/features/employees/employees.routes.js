@@ -24,3 +24,16 @@ employeesRouter.get('/departments', requireAuth, async (req, res, next) => {
     next(e);
   }
 });
+
+employeesRouter.get('/departments', requireAuth, async (req, res, next) => {
+  try {
+    const departments = await sequelize.query(
+      `SELECT DISTINCT department as department FROM dmags WHERE department IS NOT NULL ORDER BY department`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+    res.json(departments.map(d => d.department).filter(Boolean));
+  } catch (e) {
+    console.error('GET /employees/departments error:', e);
+    next(e);
+  }
+});

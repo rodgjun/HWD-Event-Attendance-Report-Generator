@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUpTrayIcon, ChevronDownIcon, ChevronUpIcon, PlayIcon } from '@heroicons/react/24/outline';
+import { ArrowUpTrayIcon, ChevronDownIcon, ChevronUpIcon, PlayIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 type AttendanceRow = { 
   attendance_id: number; 
@@ -52,7 +52,7 @@ export function Attendance() {
 
   async function loadDepartments() {
     try {
-      const res = await api.get('/attendance/departments');
+      const res = await api.get('/employees/departments');
       setDepartments(res.data);
     } catch (e: any) {
       toast.error('Failed to load departments');
@@ -263,41 +263,93 @@ export function Attendance() {
       </AnimatePresence>
     </div>
       {/* Table with Sticky Header */}
-      <div className="overflow-x-auto bg-white rounded-lg shadow-sm">
-        <table className="min-w-full">
-          <thead className="bg-gray-100 sticky top-0">
-            <tr className="text-left">
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('attendance_id')}>ID {sorting.sort === 'attendance_id' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_no')}>Emp No {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_name')}>Name {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('department')}>Dept {sorting.sort === 'department' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3">Mode</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Event</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.attendance_id} className="border-t hover:bg-gray-50">
-                <td className="p-3">{r.attendance_id}</td>
-                <td className="p-3">{r.employee_no || 'N/A'}</td>
-                <td className="p-3">{r.employee_name || 'N/A'}</td>
-                <td className="p-3">{r.department || 'N/A'}</td>
-                <td className="p-3">{r.mode_of_attendance}</td>
-                <td className="p-3"><span className={`px-2 py-1 rounded text-xs ${r.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{r.validation_status}</span></td>
-                <td className="p-3">{r.event?.event_name || 'N/A'}</td>
-                <td className="p-3">
-                  <div className="flex gap-2">
-                    <button onClick={() => startEdit(r)} className="bg-blue-500 text-white px-2 py-1 rounded text-sm">Edit</button>
-                    <button onClick={() => deleteAttendance(r.attendance_id)} className="bg-red-500 text-white px-2 py-1 rounded text-sm">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+<div className="overflow-x-auto bg-white rounded-lg shadow-sm border border-gray-200">
+  <table className="min-w-full divide-y divide-gray-200" role="table" aria-label="Attendance records">
+    <thead className="bg-gray-50 sticky top-0 z-10">
+      <tr className="text-left">
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-tl-lg" 
+            onClick={() => handleSort('attendance_id')} 
+            role="columnheader" 
+            aria-sort={sorting.sort === 'attendance_id' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
+          ID 
+          {sorting.sort === 'attendance_id' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
+        </th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+            onClick={() => handleSort('employee_no')} 
+            role="columnheader" 
+            aria-sort={sorting.sort === 'employee_no' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
+          Employee No 
+          {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
+        </th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+            onClick={() => handleSort('employee_name')} 
+            role="columnheader" 
+            aria-sort={sorting.sort === 'employee_name' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
+          Name 
+          {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
+        </th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+            onClick={() => handleSort('department')} 
+            role="columnheader" 
+            aria-sort={sorting.sort === 'department' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
+          Department 
+          {sorting.sort === 'department' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
+        </th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900">Mode</th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900">Status</th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900">Event</th>
+        <th className="px-4 py-3 text-sm font-semibold text-gray-900 rounded-tr-lg">Actions</th>
+      </tr>
+    </thead>
+    <tbody className="divide-y divide-gray-200">
+      {rows.length === 0 ? (
+        <tr>
+          <td colSpan={8} className="px-4 py-8 text-center text-gray-500 text-sm" role="row">
+            No attendance records found.
+          </td>
+        </tr>
+      ) : (
+        rows.map((r, index) => (
+          <tr key={r.attendance_id} className={`hover:bg-gray-50 focus-within:bg-gray-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`} role="row">
+            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">{r.attendance_id}</td>
+            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">{r.employee_no || 'N/A'}</td>
+            <td className="px-4 py-4 text-sm text-gray-900" role="cell">{r.employee_name || 'N/A'}</td>
+            <td className="px-4 py-4 text-sm text-gray-900" role="cell">{r.department || 'N/A'}</td>
+            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">
+              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${r.mode_of_attendance === 'Onsite' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}`}>
+                {r.mode_of_attendance}
+              </span>
+            </td>
+            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">
+              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${r.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                {r.validation_status}
+              </span>
+            </td>
+            <td className="px-4 py-4 text-sm text-gray-900" role="cell">{r.event?.event_name || 'N/A'}</td>
+            <td className="px-4 py-4 whitespace-nowrap text-sm font-medium" role="cell">
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => startEdit(r)} 
+                  className="text-blue-600 hover:text-blue-900 p-1 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  aria-label={`Edit ${r.employee_name || 'record'}`}
+                >
+                  <PencilIcon className="h-4 w-4" />
+                </button>
+                <button 
+                  onClick={() => deleteAttendance(r.attendance_id)} 
+                  className="text-red-600 hover:text-red-900 p-1 rounded focus:outline-none focus:ring-2 focus:ring-red-500"
+                  aria-label={`Delete ${r.employee_name || 'record'}`}
+                >
+                  <TrashIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))
+      )}
+    </tbody>
+  </table>
+</div>
 
       {/* Pagination */}
       <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm">
