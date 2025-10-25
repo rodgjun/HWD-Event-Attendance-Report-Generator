@@ -1,54 +1,69 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api } from '../services/api';
+import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
+import { PlusIcon, PencilIcon, TrashIcon, XMarkIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { Toaster, toast } from 'react-hot-toast';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUpTrayIcon, ChevronDownIcon, ChevronUpIcon, PlayIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { api } from '../services/api';
+import { SearchInput } from '../components/SearchInput';
+import { EventFilterDropdown } from '../components/EventFilterDropdown';
+import { UploadResultModal } from '../components/UploadResultModal';
+import { TableContainer } from '../components/TableContainer';
+import { Pagination } from '../components/Pagination';
+import { FileActionsBar } from '../components/FileActionsBar';
+import { useNavigate } from 'react-router-dom';
 
-type AttendanceRow = { 
-  attendance_id: number; 
-  employee_no: string | null; 
-  employee_name: string | null; 
-  department: string | null; 
-  event_id: number; 
-  mode_of_attendance: 'Virtual' | 'Onsite'; 
+type AttendanceRow = {
+  attendance_id: number;
+  employee_no: string | null;
+  employee_name: string;
+  department: string | null;
+  mode_of_attendance: 'Virtual' | 'Onsite';
   validation_status: 'Registered' | 'Not Registered';
-  event?: { event_name: string; event_type: string; event_date: string };
+  event: { event_id: number; event_name: string };
 };
 
-type EventOption = { event_id: number; event_name: string };
+type PaginationData = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+type UploadResult = { inserted: number; skipped?: number; skip_details?: any[] };
 type DepartmentOption = string;
 
 export function Attendance() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [events, setEvents] = useState<EventOption[]>([]);
+  const [pagination, setPagination] = useState<PaginationData>({ total: 0, page: 1, limit: 10, totalPages: 0 });
+  const [search, setSearch] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState<number>(0);
+  const [selectedEventName, setSelectedEventName] =useState('');
+  const [sorting, setSorting] = useState({ sort: 'attendance_id', order: 'DESC' as 'ASC' | 'DESC' });
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [editingRegId, setEditingRegId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    employee_no: '',
+    employee_name: '',
+    department: '',
+    mode_of_attendance: 'Onsite' as 'Virtual' | 'Onsite',
+    event_id: 0
+  });
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
-  const [form, setForm] = useState<{ employee_no: string; employee_name: string; department: string; mode_of_attendance: 'Virtual' | 'Onsite'; event_name: string }>({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-  const [editingAttendance, setEditingAttendance] = useState<AttendanceRow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(true);
-  const [showFormSection, setShowFormSection] = useState(false);
-  
-  // Pagination and filtering state
-  const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [filters, setFilters] = useState({ event_name: '', employee_no: '', employee_name: '', department: '' });
-  const [sorting, setSorting] = useState({ sort: 'attendance_id', order: 'DESC' });
+  const [tableLoading, setTableLoading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
+  const exportParams = {
+    ...(search && { search }),
+    ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
+  };
+
+
+  // Load departments once
   useEffect(() => {
-    loadEvents();
     loadDepartments();
-    load();
-  }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
-
-  async function loadEvents() {
-    try {
-      const res = await api.get('/events');
-      setEvents(res.data.events || []);
-    } catch (e: any) {
-      toast.error('Failed to load events');
-    }
-  }
+  }, []);
 
   async function loadDepartments() {
     try {
@@ -59,129 +74,147 @@ export function Attendance() {
     }
   }
 
-  async function load() {
-    try {
-      setError(null);
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        limit: pagination.limit.toString(),
-        sort: sorting.sort,
-        order: sorting.order,
-        ...(filters.event_name && { event_name: filters.event_name }),
-        ...(filters.employee_no && { employee_no: filters.employee_no }),
-        ...(filters.employee_name && { employee_name: filters.employee_name }),
-        ...(filters.department && { department: filters.department })
-      });
-      
-      const res = await api.get(`/attendance?${params}`);
-      setRows(res.data.attendance);
-      setPagination(res.data.pagination);
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to load attendance');
-    }
-  }
-  
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      await api.post('/attendance/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      toast.success('File uploaded successfully');
-      e.target.value = '';
-      await load();
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to upload file');
-    }
-  }
+  // Load attendance data
+  useEffect(() => {
+    const load = async () => {
+      setTableLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: pagination.page.toString(),
+          limit: pagination.limit.toString(),
+          sort: sorting.sort,
+          order: sorting.order,
+          ...(selectedEventId && { event_id: selectedEventId.toString() }),
+          ...(search && { search })
+        });
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmedName = form.employee_name.trim();
-    if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
-      toast.error('Employee Name is required for walk-in attendance');
+        const res = await api.get(`/attendance?${params}`);
+        setRows(res.data.attendance);
+        setPagination(res.data.pagination);
+      } catch (e: any) {
+        toast.error(e.response?.data?.error || 'Failed to load attendance');
+      } finally {
+        setTableLoading(false);
+      }
+    };
+    load();
+  }, [pagination.page, pagination.limit, sorting, selectedEventId, search]);
+
+  // Handle form submission
+  const handleAddOrUpdate = async (id?: number) => {
+    if (!form.employee_name.trim()) {
+      toast.error('Employee Name is required');
       return;
     }
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),
-      employee_name: trimmedName || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
-    try {
-      await api.post('/attendance', payload);
-      toast.success('Attendance added successfully');
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-      setEditingAttendance(null);
-      setShowFormSection(false);
-      await load();
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to create attendance');
-    }
-  }
-
-  async function updateAttendance(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingAttendance) return;
-    const trimmedName = form.employee_name.trim();
-    if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
-      toast.error('Employee Name is required for walk-in attendance');
+    if (!form.event_id) {
+      toast.error('Event is required');
       return;
     }
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),
-      employee_name: trimmedName || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
-    try {
-      await api.put(`/attendance/${editingAttendance.attendance_id}`, payload);
-      toast.success('Attendance updated successfully');
-      setEditingAttendance(null);
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-      setShowFormSection(false);
-      await load();
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to update attendance');
-    }
-  }
 
-  async function deleteAttendance(id: number) {
-    if (!confirm('Are you sure?')) return;
+    const payload = {
+      employee_no: form.employee_no.trim() || null,
+      employee_name: form.employee_name.trim(),
+      department: form.department.trim() || null,
+      mode_of_attendance: form.mode_of_attendance,
+      event_id: form.event_id
+    };
+
+    try {
+      if (id) {
+        await api.put(`/attendance/${id}`, payload);
+        toast.success('Attendance updated');
+      } else {
+        await api.post('/attendance', payload);
+        toast.success('Attendance added');
+      }
+      resetForm();
+      setSelectedRows(new Set());
+    } catch (e: any) {
+      toast.error(e.response?.data?.details || e.response?.data?.error || 'Operation failed');
+    }
+  };
+
+  const resetForm = () => {
+    setEditingRegId(null);
+    setForm({
+      employee_no: '',
+      employee_name: '',
+      department: '',
+      mode_of_attendance: 'Onsite',
+      event_id: selectedEventId || 0
+    });
+  };
+
+  const startEdit = (row: AttendanceRow) => {
+    setEditingRegId(row.attendance_id);
+    setForm({
+      employee_no: row.employee_no || '',
+      employee_name: row.employee_name,
+      department: row.department || '',
+      mode_of_attendance: row.mode_of_attendance,
+      event_id: row.event.event_id
+    });
+    inputRefs.current['employee_no']?.focus();
+  };
+
+  const cancelEdit = () => {
+    resetForm();
+  };
+
+  const deleteRegistration = async (id: number) => {
+    if (!confirm('Delete this attendance record?')) return;
     try {
       await api.delete(`/attendance/${id}`);
-      toast.success('Attendance deleted');
-      await load();
+      toast.success('Deleted');
     } catch (e: any) {
-      toast.error('Failed to delete attendance');
+      toast.error(e.response?.data?.error || 'Delete failed');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ${selectedRows.size} selected records?`)) return;
+    try {
+      await api.post('/attendance/bulk-delete', { ids: Array.from(selectedRows) });
+      toast.success('Bulk delete successful');
+      setSelectedRows(new Set());
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || 'Bulk delete failed');
+    }
+  };
+
+  const handleUploadComplete = (result: UploadResult) => {
+    setUploadResult(result);
+    setShowUploadModal(true);
+  };
+
+  // Employee lookup
+  async function handleEmployeeNoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const no = e.target.value.trim();
+    setForm({ ...form, employee_no: no });
+    if (no && no !== 'NA') {
+      try {
+        const res = await api.get(`/employees/by-number/${no}`);
+        setForm(prev => ({ ...prev, employee_name: res.data.employee_name || '', department: res.data.department || '' }));
+      } catch (e: any) {
+        if (e.response?.status === 404) {
+          setForm(prev => ({ ...prev, employee_name: '', department: '' }));
+        } else {
+          toast.error('Lookup failed');
+        }
+      }
+    } else {
+      setForm(prev => ({ ...prev, employee_name: '', department: '' }));
     }
   }
 
-  function startEdit(attendance: AttendanceRow) {
-    setEditingAttendance(attendance);
-    setForm({
-      employee_no: attendance.employee_no === 'NA' ? '' : (attendance.employee_no || ''),
-      employee_name: attendance.employee_name || '',
-      department: attendance.department || '',
-      mode_of_attendance: attendance.mode_of_attendance,
-      event_name: attendance.event?.event_name || ''
-    });
-    setShowFormSection(true);
-  }
-
-  function cancelEdit() {
-    setEditingAttendance(null);
-    setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-    setShowFormSection(false);
-  }
-
-  function handleSort(field: string) {
-    const newOrder = sorting.sort === field && sorting.order === 'ASC' ? 'DESC' : 'ASC';
-    setSorting({ sort: field, order: newOrder });
-  }
+  const ChevronIcon = ({ field }: { field: string }) => {
+    if (sorting.sort !== field) return null;
+    return sorting.order === 'ASC' ? (
+      <span className="ml-1 inline-block">↑</span>
+    ) : (
+      <span className="ml-1 inline-block">↓</span>
+    );
+  };
 
   const handleKioskLaunch = () => {
     navigate('/kiosk');
@@ -190,178 +223,250 @@ export function Attendance() {
   return (
     <div className="space-y-6">
       <Toaster position="top-right" />
-      {/* Top Bar */}
-      <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
-        <h2 className="text-2xl font-bold text-gray-900">Attendance Management</h2>
-        <motion.button
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
+        <div className="flex items-center gap-3">
+          <SearchInput value={search} onChange={setSearch} placeholder="Search name or employee no..." />
+          {/* Kiosk Mode Button - Placeholder (will move beside search later) */}
+          <motion.button
           whileHover={{ scale: 1.02 }}
           onClick={handleKioskLaunch}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm font-medium"
         >
-          Launch Kiosk Mode
+          <PlayIcon className="w-4 h-4" />
+            Kiosk Mode
         </motion.button>
-      </div>
-
-      {/* Collapsible Filters */}
-      <motion.details open={showFilters} className="bg-white p-4 rounded-lg shadow-sm">
-        <summary className="cursor-pointer flex items-center justify-between font-medium text-gray-900">
-          Filters {showFilters ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
-        </summary>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <input className="border p-2 rounded" placeholder="Event Name" value={filters.event_name} onChange={e => setFilters({ ...filters, event_name: e.target.value })} />
-          <input className="border p-2 rounded" placeholder="Employee No" value={filters.employee_no} onChange={e => setFilters({ ...filters, employee_no: e.target.value })} />
-          <input className="border p-2 rounded" placeholder="Employee Name" value={filters.employee_name} onChange={e => setFilters({ ...filters, employee_name: e.target.value })} />
-          <input className="border p-2 rounded" placeholder="Department" value={filters.department} onChange={e => setFilters({ ...filters, department: e.target.value })} />
         </div>
-      </motion.details>
-
-      {/* Import Section */}
-      <div className="bg-white p-4 rounded-lg shadow-sm flex items-center gap-3">
-        <ArrowUpTrayIcon className="w-5 h-5" />
-        <label className="text-sm font-medium">Import Attendance:</label>
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={upload} className="border p-2 rounded file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50" />
       </div>
 
-      {/* Collapsible Add/Edit Form */}
-      <div className="bg-white p-4 rounded-lg shadow-sm">
-      <button
-        onClick={() => setShowFormSection(!showFormSection)}
-        className="w-full flex items-center justify-between font-medium text-gray-900 py-2"
+      {/* File Actions */}
+      <FileActionsBar
+        uploadEndpoint="/attendance/upload"
+        exportEndpoint="/attendance/export"
+        templateEndpoint="/attendance/template"
+        exportParams={exportParams}
+        uploadLabel="Upload Registrations"
+      />
+
+      {/* Filters & Bulk Actions */}
+      
+
+      {/* Table */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
       >
-        {editingAttendance ? 'Edit' : 'Add New Record'}
-        {showFormSection ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
-      </button>
-      <AnimatePresence>
-        {showFormSection && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="mt-4 overflow-hidden"
+        {/* Event Filter + Bulk Delete */}
+        <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-gray-700">Event:</label>
+            <EventFilterDropdown selectedEventId={selectedEventId} onChange={setSelectedEventId} />
+          </div>
+
+        {selectedRows.size > 0 && (
+          <button
+            onClick={handleBulkDelete}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
+            aria-label={`Delete ${selectedRows.size} selected records`}
           >
-            <form onSubmit={editingAttendance ? updateAttendance : submit} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-              <input className="border p-2 rounded" placeholder="Employee No (optional)" value={form.employee_no} onChange={e => setForm({ ...form, employee_no: e.target.value })} />
-              <input className="border p-2 rounded" placeholder="Employee Name" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} required={form.employee_no.trim() === ''} />
-              <input className="border p-2 rounded" placeholder="Department" list="departments-list" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} />
-              <datalist id="departments-list">{departments.map(dept => <option key={dept} value={dept} />)}</datalist>
-              <select className="border p-2 rounded" value={form.mode_of_attendance} onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as any })}>
-                <option>Onsite</option>
-                <option>Virtual</option>
-              </select>
-              <input className="border p-2 rounded" placeholder="Event Name" list="events-list" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} required />
-              <datalist id="events-list">{events.map(event => <option key={event.event_id} value={event.event_name} />)}</datalist>
-              <div className="flex gap-2 col-span-5">
-                <button className="bg-blue-600 text-white px-4 py-2 rounded flex-1" type="submit">
-                  {editingAttendance ? 'Update' : 'Add'} Attendance
-                </button>
-                {editingAttendance && <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded flex-1">Cancel</button>}
-              </div>
-            </form>
-          </motion.div>
+            <TrashIcon className="w-4 h-4" />
+            Delete ({selectedRows.size})
+          </button>
         )}
-      </AnimatePresence>
-    </div>
-      {/* Table with Sticky Header */}
-<div className="overflow-x-auto bg-white rounded-lg shadow-sm border border-gray-200">
-  <table className="min-w-full divide-y divide-gray-200" role="table" aria-label="Attendance records">
-    <thead className="bg-gray-50 sticky top-0 z-10">
-      <tr className="text-left">
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-tl-lg" 
-            onClick={() => handleSort('attendance_id')} 
-            role="columnheader" 
-            aria-sort={sorting.sort === 'attendance_id' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
-          ID 
-          {sorting.sort === 'attendance_id' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
-        </th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-            onClick={() => handleSort('employee_no')} 
-            role="columnheader" 
-            aria-sort={sorting.sort === 'employee_no' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
-          Employee No 
-          {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
-        </th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-            onClick={() => handleSort('employee_name')} 
-            role="columnheader" 
-            aria-sort={sorting.sort === 'employee_name' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
-          Name 
-          {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
-        </th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900 cursor-pointer hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" 
-            onClick={() => handleSort('department')} 
-            role="columnheader" 
-            aria-sort={sorting.sort === 'department' ? (sorting.order === 'ASC' ? 'ascending' : 'descending') : 'none'}>
-          Department 
-          {sorting.sort === 'department' && (sorting.order === 'ASC' ? <span className="ml-1">↑</span> : <span className="ml-1">↓</span>)}
-        </th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900">Mode</th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900">Status</th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900">Event</th>
-        <th className="px-4 py-3 text-sm font-semibold text-gray-900 rounded-tr-lg">Actions</th>
-      </tr>
-    </thead>
-    <tbody className="divide-y divide-gray-200">
-      {rows.length === 0 ? (
-        <tr>
-          <td colSpan={8} className="px-4 py-8 text-center text-gray-500 text-sm" role="row">
-            No attendance records found.
-          </td>
-        </tr>
-      ) : (
-        rows.map((r, index) => (
-          <tr key={r.attendance_id} className={`hover:bg-gray-50 focus-within:bg-gray-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`} role="row">
-            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">{r.attendance_id}</td>
-            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">{r.employee_no || 'N/A'}</td>
-            <td className="px-4 py-4 text-sm text-gray-900" role="cell">{r.employee_name || 'N/A'}</td>
-            <td className="px-4 py-4 text-sm text-gray-900" role="cell">{r.department || 'N/A'}</td>
-            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">
-              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${r.mode_of_attendance === 'Onsite' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'}`}>
-                {r.mode_of_attendance}
-              </span>
-            </td>
-            <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" role="cell">
-              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${r.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                {r.validation_status}
-              </span>
-            </td>
-            <td className="px-4 py-4 text-sm text-gray-900" role="cell">{r.event?.event_name || 'N/A'}</td>
-            <td className="px-4 py-4 whitespace-nowrap text-sm font-medium" role="cell">
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => startEdit(r)} 
-                  className="text-blue-600 hover:text-blue-900 p-1 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  aria-label={`Edit ${r.employee_name || 'record'}`}
+      </div>
+        <div className="w-full overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={selectedRows.size === rows.length && rows.length > 0}
+                    onChange={(e) => {
+                      setSelectedRows(e.target.checked ? new Set(rows.map(r => r.attendance_id)) : new Set());
+                    }}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'attendance_id',
+                    order: prev.sort === 'attendance_id' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
                 >
-                  <PencilIcon className="h-4 w-4" />
-                </button>
-                <button 
-                  onClick={() => deleteAttendance(r.attendance_id)} 
-                  className="text-red-600 hover:text-red-900 p-1 rounded focus:outline-none focus:ring-2 focus:ring-red-500"
-                  aria-label={`Delete ${r.employee_name || 'record'}`}
+                  ID <ChevronIcon field="attendance_id" />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'employee_no',
+                    order: prev.sort === 'employee_no' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
                 >
-                  <TrashIcon className="h-4 w-4" />
-                </button>
-              </div>
-            </td>
-          </tr>
-        ))
-      )}
-    </tbody>
-  </table>
-</div>
+                  Employee No <ChevronIcon field="employee_no" />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'employee_name',
+                    order: prev.sort === 'employee_name' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
+                >
+                  Employee Name <ChevronIcon field="employee_name" />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'department',
+                    order: prev.sort === 'department' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
+                >
+                  Department <ChevronIcon field="department" />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mode</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              <TableContainer
+                loading={tableLoading}
+                data={rows}
+                emptyMessage={selectedEventId ? `No attendance for "${selectedEventName}".` : 'No attendance records.'}
+              >
+                {/* Add/Edit Row */}
+                <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
+                  <td className="px-6 py-4"></td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {editingRegId ? `Edit ${editingRegId}` : 'New'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <input
+                      ref={el => inputRefs.current['employee_no'] = el}
+                      type="text"
+                      value={form.employee_no}
+                      onChange={handleEmployeeNoChange}
+                      className="w-full p-1 border rounded text-sm"
+                      placeholder="Optional"
+                    />
+                  </td>
+                  <td className="px-6 py-4">
+                    <input
+                      type="text"
+                      value={form.employee_name}
+                      onChange={e => setForm({ ...form, employee_name: e.target.value })}
+                      className="w-full p-1 border rounded text-sm"
+                      placeholder="Required"
+                    />
+                  </td>
+                  <td className="px-6 py-4">
+                    <input
+                      list="departments"
+                      value={form.department}
+                      onChange={e => setForm({ ...form, department: e.target.value })}
+                      className="w-full p-1 border rounded text-sm"
+                    />
+                    <datalist id="departments">
+                      {departments.map(d => <option key={d} value={d} />)}
+                    </datalist>
+                  </td>
+                  <td className="px-6 py-4">
+                    <select
+                      value={form.mode_of_attendance}
+                      onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as 'Virtual' | 'Onsite' })}
+                      className="w-full p-1 border rounded text-sm"
+                    >
+                      <option value="Onsite">Onsite</option>
+                      <option value="Virtual">Virtual</option>
+                    </select>
+                  </td>
+                  <td className="px-6 py-4 text-xs text-gray-500">—</td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={() => handleAddOrUpdate(editingRegId || undefined)}
+                      disabled={tableLoading || !form.employee_name || !form.event_id}
+                      className="text-green-600 mr-2 disabled:opacity-50"
+                    >
+                      {editingRegId ? <PencilIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
+                    </button>
+                    <button onClick={cancelEdit} className="text-gray-400">
+                      <XMarkIcon className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+
+                {/* Data Rows */}
+                {rows.map(row => (
+                  <tr key={row.attendance_id}>
+                    <td className="px-6 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.has(row.attendance_id)}
+                        onChange={(e) => {
+                          const newSet = new Set(selectedRows);
+                          e.target.checked ? newSet.add(row.attendance_id) : newSet.delete(row.attendance_id);
+                          setSelectedRows(newSet);
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.attendance_id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_no || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.department || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        row.mode_of_attendance === 'Onsite' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'
+                      }`}>
+                        {row.mode_of_attendance}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        row.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {row.validation_status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button onClick={() => startEdit(row)} className="text-blue-600 mr-2">
+                        <PencilIcon className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => deleteRegistration(row.attendance_id)} className="text-red-600">
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </TableContainer>
+            </tbody>
+          </table>
+        </div>
+      </motion.div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm">
-        <div className="text-sm text-gray-600">
+      <div className="flex justify-between items-center mt-6">
+        <div className="text-sm text-gray-700">
           Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
         </div>
-        <div className="flex gap-2">
-          <button disabled={pagination.page <= 1} onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })} className="px-3 py-1 border rounded disabled:opacity-50">Previous</button>
-          <span>Page {pagination.page} of {pagination.totalPages}</span>
-          <button disabled={pagination.page >= pagination.totalPages} onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
-        </div>
+        <Pagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          onPageChange={p => setPagination({ ...pagination, page: p })}
+          disabled={tableLoading}
+        />
       </div>
+
+      {/* Upload Result Modal */}
+      <UploadResultModal
+        result={uploadResult}
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+      />
     </div>
   );
 }

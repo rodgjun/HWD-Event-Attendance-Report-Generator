@@ -385,3 +385,11 @@ registrationsRouter.get('/export', requireAuth, async (req, res, next) => {
     next(e);
   }
 });
+
+registrationsRouter.post('/bulk-delete', requireAuth, async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    await Registration.destroy({ where: { reg_id: ids } });
+    res.json({ message: 'Deleted' });
+  } catch (e) { next(e); }
+});

@@ -12,7 +12,7 @@ export const Dmag = sequelize.define('dmag', {
   employee_name: { type: DataTypes.STRING, allowNull: false },
   department: { type: DataTypes.STRING },
   age: { type: DataTypes.INTEGER },
-  gender: { type: DataTypes.ENUM('Male', 'Female') },
+  gender: { type: DataTypes.ENUM('Male', 'Female', 'M', 'F') },
 }, { timestamps: false });
 
 export const Event = sequelize.define('event', {

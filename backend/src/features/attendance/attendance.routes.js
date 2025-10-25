@@ -2,26 +2,24 @@ import { Router } from 'express';
 import multer from 'multer';
 import XLSX from 'xlsx';
 import { body, validationResult } from 'express-validator';
-import { Attendance, Registration, Event } from '../../core/models.js';
 import { sequelize } from '../../core/db.js';
-import { Op } from 'sequelize';
+import { Attendance, Event, Registration } from '../../core/models.js';
 import { requireAuth } from '../_shared/auth-middleware.js';
+import { Op } from 'sequelize';
 
 const upload = multer({ storage: multer.memoryStorage() });
 export const attendanceRouter = Router();
 
+// Helper to compute validation status
 async function computeValidationStatus(employeeNo, eventId) {
-  if (!employeeNo || employeeNo === 'NA') return 'Not Registered'; // 'NA' or null can't be registered
-  const employeeNoStr = String(employeeNo);
-  const match = await Registration.findOne({ 
-    where: { 
-      employee_no: employeeNoStr, 
-      event_id: eventId 
-    } 
+  if (!employeeNo || employeeNo === 'NA') return 'Not Registered';
+  const match = await Registration.findOne({
+    where: { employee_no: String(employeeNo), event_id: eventId }
   });
   return match ? 'Registered' : 'Not Registered';
 }
 
+// GET /attendance - Paginated list with unified case-insensitive search and filters
 attendanceRouter.get('/', requireAuth, async (req, res, next) => {
   try {
     const { 
@@ -31,59 +29,41 @@ attendanceRouter.get('/', requireAuth, async (req, res, next) => {
       order = 'DESC', 
       event_id,
       employee_no,
-      employee_name,
-      department,
-      event_name
+      search 
     } = req.query;
-    const offset = (page - 1) * limit;
+    const offset = (Number(page) - 1) * Number(limit);
     
     const where = {};
-    if (event_id) where.event_id = event_id;
+    if (event_id) where.event_id = Number(event_id);
     if (employee_no) {
-      where.employee_no = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('employee_no')),
-        { [Op.like]: `%${employee_no.toLowerCase()}%` }
-      );
+      where.employee_no = { [Op.iLike]: `%${employee_no}%` };
     }
-    if (employee_name) {
-      where.employee_name = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('employee_name')),
-        { [Op.like]: `%${employee_name.toLowerCase()}%` }
-      );
+    if (search) {
+      where[Op.or] = [
+        { employee_name: { [Op.iLike]: `%${search}%` } },
+        { employee_no: { [Op.iLike]: `%${search}%` } }
+      ];
     }
-    if (department) {
-      where.department = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('department')),
-        { [Op.like]: `%${department.toLowerCase()}%` }
-      );
-    }
-
-    const includeWhere = {};
-    if (event_name) {
-      includeWhere.event_name = sequelize.where(
-        sequelize.fn('LOWER', sequelize.col('event_name')),
-        { [Op.like]: `%${event_name.toLowerCase()}%` }
-      );
-    }
+    
+    const include = [{
+      model: Event,
+      attributes: ['event_id', 'event_name']
+    }];
     
     const { count, rows } = await Attendance.findAndCountAll({
       where,
-      include: [{
-        model: Event,
-        where: Object.keys(includeWhere).length > 0 ? includeWhere : undefined,
-        required: Object.keys(includeWhere).length > 0
-      }],
+      include,
       order: [[sort, order.toUpperCase()]],
-      limit: parseInt(limit),
-      offset: parseInt(offset)
+      limit: Number(limit),
+      offset
     });
     
     res.json({
       attendance: rows,
       pagination: {
         total: count,
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: Number(page),
+        limit: Number(limit),
         totalPages: Math.ceil(count / limit)
       }
     });
@@ -93,82 +73,121 @@ attendanceRouter.get('/', requireAuth, async (req, res, next) => {
   }
 });
 
+// GET /attendance/template - Download Excel template
+attendanceRouter.get('/template', requireAuth, async (req, res, next) => {
+  try {
+    // Fetch all events for reference sheet
+    const events = await Event.findAll({ attributes: ['event_id', 'event_name'] });
+
+    // Create main template sheet
+    const templateData = [
+      ['Employee No', 'Employee Name', 'Department', 'Mode of Attendance', 'Event Name'], // Headers
+      ['EMP001', 'John Doe', 'IT', 'Onsite', 'Sample Event'] // Sample row
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(templateData);
+
+    // Create events reference sheet
+    const eventsData = [['Event ID', 'Event Name']];
+    events.forEach(event => eventsData.push([event.event_id, event.event_name]));
+    const eventsWs = XLSX.utils.aoa_to_sheet(eventsData);
+
+    // Bundle into workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendance Template');
+    XLSX.utils.book_append_sheet(wb, eventsWs, 'Events Reference');
+
+    // Write and send as download
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=attendance-template.xlsx');
+    res.send(buffer);
+  } catch (e) {
+    console.error('GET /attendance/template error:', e);
+    next(e);
+  }
+});
+
+// POST /attendance - Create new attendance
 attendanceRouter.post(
   '/',
   requireAuth,
   [
-    body('employee_no').optional().trim(),  // Relaxed for empty/NA
+    body('employee_no').optional().trim(),
     body('employee_name').optional().isString().trim(),
     body('department').optional().isString().trim(),
-    body('mode_of_attendance').isIn(['Virtual', 'Onsite']).withMessage('Mode must be Virtual or Onsite'),
-    body('event_name').isString().notEmpty().trim().withMessage('Event Name is required'),
+    body('mode_of_attendance').isIn(['Virtual', 'Onsite']),
+    body('event_id').optional().isInt({ min: 1 }),
+    body('event_name').optional().isString().trim()
   ],
   async (req, res, next) => {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
-        console.error('POST /attendance validation errors:', errors.array());
         return res.status(400).json({ error: 'Validation failed', details: errors.array() });
       }
       
-      const { event_name, employee_no, employee_name: empName, ...rest } = req.body;
-      const event = await Event.findOne({ where: { event_name: { [Op.iLike]: event_name } } });
-      if (!event) {
-        console.error(`POST /attendance: Event "${event_name}" not found`);
-        return res.status(404).json({ error: `Event "${event_name}" not found`, details: `Event "${event_name}" does not exist` });
+      let { event_id, event_name, employee_no, employee_name, department, mode_of_attendance } = req.body;
+      const finalEmployeeNo = employee_no?.trim() || null;
+      const finalEmployeeName = employee_name?.trim() || null;
+      
+      // Resolve event_id if event_name provided
+      if (event_name && !event_id) {
+        const event = await Event.findOne({ where: { event_name: event_name.trim() } });
+        if (!event) return res.status(404).json({ error: 'Event not found' });
+        event_id = event.event_id;
       }
-      
-      // Handle empty employee_no → 'NA'
-      const finalEmployeeNo = (employee_no === '' || employee_no === undefined || employee_no === null) ? 'NA' : employee_no.trim();
-      
-      // Conditional duplicate check
-      let existingAttendance;
-      if (finalEmployeeNo === 'NA') {
-        if (!empName?.trim()) {
-          return res.status(400).json({ error: 'Employee Name required for walk-in attendance' });
+      if (!event_id) return res.status(400).json({ error: 'Event ID or Name required' });
+
+      // Require name for walk-ins
+      if (!finalEmployeeNo && !finalEmployeeName) {
+        return res.status(400).json({ error: 'Employee Name required for walk-ins' });
+      }
+
+      // Duplicate check: employee_no + event_id OR employee_name + event_id (case-insensitive for name)
+      const orConditions = [];
+      if (finalEmployeeNo) orConditions.push({ employee_no: finalEmployeeNo });
+      if (finalEmployeeName) {
+        orConditions.push(sequelize.where(
+          sequelize.fn('LOWER', sequelize.col('employee_name')),
+          sequelize.fn('LOWER', finalEmployeeName)
+        ));
+      }
+      const existing = await Attendance.findOne({
+        where: {
+          event_id: Number(event_id),
+          [Op.or]: orConditions
         }
-        existingAttendance = await Attendance.findOne({
-          where: {
-            employee_no: 'NA',
-            event_id: event.event_id,
-            employee_name: { [Op.iLike]: empName.trim() }
-          }
-        });
-      } else {
-        existingAttendance = await Attendance.findOne({
-          where: {
-            employee_no: finalEmployeeNo,
-            event_id: event.event_id
-          }
-        });
-      }
-      
-      if (existingAttendance) {
-        console.warn(`POST /attendance: Duplicate found for employee ${finalEmployeeNo || 'NULL'} in event ${event_name}`);
-        return res.status(409).json({ 
-          error: 'Duplicate attendance found', 
-          details: finalEmployeeNo === 'NA' 
-            ? `Employee "${empName.trim()}" already has attendance for "${event_name}"` 
-            : `Employee ${finalEmployeeNo} already has attendance for "${event_name}"` 
-        });
-      }
-      
-      const validation_status = await computeValidationStatus(finalEmployeeNo, event.event_id);
-      const created = await Attendance.create({ 
-        ...rest, 
-        employee_no: finalEmployeeNo, 
-        employee_name: empName?.trim() || null,
-        event_id: event.event_id, 
-        validation_status 
       });
+      
+      if (existing) {
+        return res.status(409).json({ 
+          error: 'Duplicate attendance found',
+          details: `Attendance for "${finalEmployeeName || finalEmployeeNo}" in event ${event_id} already exists`
+        });
+      }
+      
+      const validation_status = await computeValidationStatus(finalEmployeeNo, event_id);
+      
+      const created = await Attendance.create({
+        employee_no: finalEmployeeNo,
+        employee_name: finalEmployeeName,
+        department: department?.trim() || null,
+        mode_of_attendance,
+        validation_status,
+        event_id: Number(event_id)
+      });
+      
       res.status(201).json(created);
     } catch (e) {
-      console.error('POST /attendance error:', e);
+      if (e.name === 'SequelizeUniqueConstraintError') {
+        return res.status(409).json({ error: 'Duplicate attendance', details: 'Unique constraint violated' });
+      }
       next(e);
     }
   }
 );
 
+// PUT /attendance/:id - Update attendance
 attendanceRouter.put(
   '/:id',
   requireAuth,
@@ -176,158 +195,153 @@ attendanceRouter.put(
     body('employee_no').optional().trim(),
     body('employee_name').optional().isString().trim(),
     body('department').optional().isString().trim(),
-    body('mode_of_attendance').isIn(['Virtual', 'Onsite']),
-    body('event_name').optional().isString().trim(),
+    body('mode_of_attendance').optional().isIn(['Virtual', 'Onsite']),
+    body('event_id').optional().isInt({ min: 1 }),
+    body('event_name').optional().isString().trim()
   ],
   async (req, res, next) => {
     try {
       const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        console.error('PUT /attendance/:id validation errors:', errors.array());
-        return res.status(400).json({ error: 'Validation failed', details: errors.array() });
-      }
-      const id = parseInt(req.params.id, 10);
-      if (isNaN(id)) {
-        return res.status(400).json({ error: 'Invalid ID', details: 'Attendance ID must be a number' });
-      }
-      const attendance = await Attendance.findByPk(id);
-      if (!attendance) {
-        console.error(`PUT /attendance/${id}: Attendance not found`);
-        return res.status(404).json({ error: 'Attendance record not found', details: `ID ${id} does not exist` });
-      }
+      if (!errors.isEmpty()) return res.status(400).json({ error: 'Validation failed', details: errors.array() });
       
-      const { event_name, employee_no, employee_name: empName, ...rest } = req.body;
-      let event_id = attendance.event_id;
+      const attendance = await Attendance.findByPk(req.params.id);
+      if (!attendance) return res.status(404).json({ error: 'Attendance not found' });
+      
+      let { event_id, event_name, employee_no, employee_name, department, mode_of_attendance } = req.body;
+      const updateData = {};
+      
       if (event_name) {
-        const event = await Event.findOne({ where: { event_name: { [Op.iLike]: event_name } } });
-        if (!event) {
-          console.error(`PUT /attendance/${id}: Event "${event_name}" not found`);
-          return res.status(404).json({ error: 'Event not found', details: `Event "${event_name}" does not exist` });
-        }
+        const event = await Event.findOne({ where: { event_name: event_name.trim() } });
+        if (!event) return res.status(404).json({ error: 'Event not found' });
         event_id = event.event_id;
       }
+      if (event_id) updateData.event_id = Number(event_id);
       
-      // Handle empty employee_no → 'NA'
-      const finalEmployeeNo = (employee_no === '' || employee_no === undefined || employee_no === null) ? 'NA' : employee_no.trim();
+      const finalEmployeeNo = employee_no?.trim() || null;
+      const finalEmployeeName = employee_name?.trim() || null;
       
-      // Conditional duplicate check (excluding current)
-      let existingAttendance;
-      if (finalEmployeeNo === 'NA') {
-        if (!empName?.trim()) {
-          return res.status(400).json({ error: 'Employee Name required for walk-in attendance' });
-        }
-        existingAttendance = await Attendance.findOne({
+      // Require name for walk-ins
+      if (!finalEmployeeNo && !finalEmployeeName) {
+        return res.status(400).json({ error: 'Employee Name required for walk-ins' });
+      }
+
+      if (finalEmployeeNo !== undefined) updateData.employee_no = finalEmployeeNo;
+      if (finalEmployeeName !== undefined) updateData.employee_name = finalEmployeeName;
+      if (department !== undefined) updateData.department = department?.trim() || null;
+      if (mode_of_attendance) updateData.mode_of_attendance = mode_of_attendance;
+
+      // Duplicate check excluding self
+      const orConditions = [];
+      if (updateData.employee_no) orConditions.push({ employee_no: updateData.employee_no });
+      if (updateData.employee_name) {
+        orConditions.push(sequelize.where(
+          sequelize.fn('LOWER', sequelize.col('employee_name')),
+          sequelize.fn('LOWER', updateData.employee_name)
+        ));
+      }
+      if (orConditions.length > 0) {
+        const existing = await Attendance.findOne({
           where: {
-            employee_no: 'NA',
-            event_id,
-            employee_name: { [Op.iLike]: empName.trim() },
-            attendance_id: { [Op.ne]: id }
+            event_id: updateData.event_id || attendance.event_id,
+            [Op.or]: orConditions,
+            attendance_id: { [Op.ne]: req.params.id }
           }
         });
-      } else {
-        existingAttendance = await Attendance.findOne({
-          where: {
-            employee_no: finalEmployeeNo,
-            event_id,
-            attendance_id: { [Op.ne]: id }
-          }
-        });
+        if (existing) return res.status(409).json({ error: 'Duplicate attendance found' });
       }
       
-      if (existingAttendance) {
-        return res.status(409).json({ 
-          error: 'Duplicate attendance found', 
-          details: finalEmployeeNo === 'NA' 
-            ? `Employee "${empName.trim()}" already has attendance for this event` 
-            : `Employee ${finalEmployeeNo} already has attendance for this event` 
-        });
-      }
+      // Recompute validation status if employee_no or event_id changed
+      const newEmployeeNo = updateData.employee_no !== undefined ? updateData.employee_no : attendance.employee_no;
+      const newEventId = updateData.event_id || attendance.event_id;
+      updateData.validation_status = await computeValidationStatus(newEmployeeNo, newEventId);
       
-      const validation_status = await computeValidationStatus(finalEmployeeNo, event_id);
-      await attendance.update({ 
-        ...rest, 
-        employee_no: finalEmployeeNo, 
-        employee_name: empName?.trim() || null,
-        event_id, 
-        validation_status 
-      });
+      await attendance.update(updateData);
       res.json(attendance);
     } catch (e) {
-      console.error(`PUT /attendance/${req.params.id} error:`, e);
       next(e);
     }
   }
 );
 
+// DELETE /attendance/:id
 attendanceRouter.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({ error: 'Invalid ID', details: 'Attendance ID must be a number' });
-    }
-    const attendance = await Attendance.findByPk(id);
-    if (!attendance) {
-      console.error(`DELETE /attendance/${id}: Attendance not found`);
-      return res.status(404).json({ error: 'Attendance record not found', details: `ID ${id} does not exist` });
-    }
+    const attendance = await Attendance.findByPk(req.params.id);
+    if (!attendance) return res.status(404).json({ error: 'Attendance not found' });
     await attendance.destroy();
-    res.json({ message: 'Attendance record deleted successfully' });
+    res.status(204).send();
   } catch (e) {
-    console.error(`DELETE /attendance/${req.params.id} error:`, e);
+    console.error('DELETE /attendance/:id error:', e);
     next(e);
   }
 });
 
+// POST /attendance/bulk-delete
+attendanceRouter.post('/bulk-delete', requireAuth, async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Invalid or empty IDs array' });
+    }
+    await Attendance.destroy({ where: { attendance_id: { [Op.in]: ids } } });
+    res.status(204).send();
+  } catch (e) {
+    console.error('POST /attendance/bulk-delete error:', e);
+    next(e);
+  }
+});
+
+// POST /attendance/upload - Bulk upload from Excel
 attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req, res, next) => {
   try {
-    const { buffer } = req.file || {};
-    if (!buffer) {
-      console.error('POST /attendance/upload: No file uploaded');
-      return res.status(400).json({ error: 'No file uploaded', details: 'Please select a valid Excel/CSV file' });
-    }
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+    
+    if (rows.length < 2) return res.status(400).json({ error: 'Empty or invalid sheet' });
+    
+    const headers = rows[0].map(h => h.toString().trim().toLowerCase());
+    const requiredHeaders = ['employee no', 'employee name', 'department', 'mode of attendance', 'event name'];
+    for (const req of requiredHeaders) {
+      if (!headers.includes(req)) return res.status(400).json({ error: `Missing header: ${req}` });
+    }
+    
     const created = [];
     const skipped = [];
+    const seen = new Map(); // key: employee_no_event_id or NA_event_id_name_lower
     
-    const seen = new Map();
-    
-    for (const row of rows) {
-      let employee_no = row['Employee No']?.toString().trim();
-      const rawEmployeeName = row['Employee Name']?.toString().trim();
-      const event_name = row['Event Name']?.toString().trim();
-      const mode_of_attendance = row['Mode of Attendance']?.toString().trim() || 'Virtual';
+    for (let i = 1; i < rows.length; i++) {
+      const row = {};
+      headers.forEach((h, idx) => row[h] = rows[i][idx]?.toString().trim() || '');
       
+      const event_name = row['event name'];
       if (!event_name) {
         skipped.push({ ...row, reason: 'Missing Event Name' });
-        console.warn('Upload skipping row: Missing Event Name');
         continue;
       }
-      if (!['Virtual', 'Onsite'].includes(mode_of_attendance)) {
-        skipped.push({ ...row, reason: `Invalid Mode of Attendance "${mode_of_attendance}"` });
-        console.warn(`Upload skipping row: Invalid Mode of Attendance "${mode_of_attendance}"`);
-        continue;
-      }
-      
-      const event = await Event.findOne({ where: { event_name: { [Op.iLike]: event_name } } });
+      const event = await Event.findOne({ where: { event_name } });
       if (!event) {
         skipped.push({ ...row, reason: `Event "${event_name}" not found` });
-        console.warn(`Upload skipping row: Event "${event_name}" not found`);
         continue;
       }
       
-      // Handle empty employee_no → 'NA'
-      const finalEmployeeNo = (employee_no === '' || !employee_no) ? 'NA' : employee_no;
+      const mode = row['mode of attendance'].toLowerCase();
+      if (!['virtual', 'onsite'].includes(mode)) {
+        skipped.push({ ...row, reason: 'Invalid Mode of Attendance (must be Virtual or Onsite)' });
+        continue;
+      }
       
-      // Conditional duplicate key
+      let finalEmployeeNo = row['employee no'] || 'NA';
+      const rawEmployeeName = row['employee name'];
+      if (finalEmployeeNo === 'NA' && !rawEmployeeName) {
+        skipped.push({ ...row, reason: 'Employee Name required for walk-ins' });
+        continue;
+      }
+      
       let key;
       if (finalEmployeeNo === 'NA') {
-        if (!rawEmployeeName) {
-          skipped.push({ ...row, reason: 'Employee Name required for walk-in (no Employee No)' });
-          console.warn(`Upload skipping row: Missing Employee Name for walk-in`);
-          continue;
-        }
         key = `NA_${event.event_id}_${rawEmployeeName.toLowerCase()}`;
       } else {
         key = `${finalEmployeeNo}_${event.event_id}`;
@@ -338,19 +352,19 @@ attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req,
           ? `Duplicate walk-in "${rawEmployeeName}" for event "${event_name}"`
           : `Duplicate employee "${finalEmployeeNo}" for event "${event_name}"`;
         skipped.push({ ...row, reason });
-        console.warn(`Upload skipping duplicate: ${key}`);
         continue;
       }
       seen.set(key, true);
       
-      const validation_status = await computeValidationStatus(finalEmployeeNo, event.event_id);
+      const validation_status = await computeValidationStatus(finalEmployeeNo !== 'NA' ? finalEmployeeNo : null, event.event_id);
+      
       const record = await Attendance.create({
-        employee_no: finalEmployeeNo,
+        employee_no: finalEmployeeNo !== 'NA' ? finalEmployeeNo : null,
         employee_name: rawEmployeeName || null,
-        department: row['Department']?.toString().trim() || null,
-        mode_of_attendance,
-        event_id: event.event_id,
+        department: row['department'] || null,
+        mode_of_attendance: mode.charAt(0).toUpperCase() + mode.slice(1),
         validation_status,
+        event_id: event.event_id
       });
       created.push(record);
     }
@@ -358,26 +372,11 @@ attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req,
     const response = { inserted: created.length };
     if (skipped.length > 0) {
       response.skipped = skipped.length;
-      response.skip_details = skipped; // For debugging
+      response.skip_details = skipped;
     }
-    console.log(`Upload completed: ${response.inserted} inserted, ${response.skipped || 0} skipped`);
     res.json(response);
   } catch (e) {
     console.error('POST /attendance/upload error:', e);
-    next(e);
-  }
-});
-
-// New endpoint for departments autocomplete
-attendanceRouter.get('/departments', requireAuth, async (req, res, next) => {
-  try {
-    const departments = await sequelize.query(
-      `SELECT DISTINCT department as department FROM dmags WHERE department IS NOT NULL ORDER BY department`,
-      { type: sequelize.QueryTypes.SELECT }
-    );
-    res.json(departments.map(d => d.department).filter(Boolean));
-  } catch (e) {
-    console.error('GET /attendance/departments error:', e);
     next(e);
   }
 });

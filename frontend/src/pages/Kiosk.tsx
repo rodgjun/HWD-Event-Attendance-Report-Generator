@@ -42,7 +42,7 @@ export function Kiosk() {
 
   async function loadDepartments() {
     try {
-      const res = await api.get('attendance/departments');
+      const res = await api.get('employees/departments');
       setDepartments(res.data);
     } catch (e: any) {
       toast.error('Failed to load departments');

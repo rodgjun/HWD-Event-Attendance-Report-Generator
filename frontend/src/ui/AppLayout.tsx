@@ -135,7 +135,10 @@ export function AppLayout() {
     <main className={`mx-auto max-w-6xl p-4 ${isKiosk ? 'pt-0' : 'pt-20'}`}>
       <Outlet />
     </main>
-    <Toaster position="top-right" containerStyle={{ zIndex: 9999 }} />  {/* Global, high z-index for kiosk fullscreen */}
+     {/* Only show Toaster when kiosk is active */}
+    {isKiosk && (
+      <Toaster position="top-right" containerStyle={{ zIndex: 9999 }} />
+    )}
     </div>
   );
 }
