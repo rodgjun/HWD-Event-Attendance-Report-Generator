@@ -76,7 +76,11 @@ export function Attendance() {
 
   // Load attendance data
   useEffect(() => {
-    const load = async () => {
+    
+    load();
+  }, [pagination.page, pagination.limit, sorting, selectedEventId, search]);
+
+  const load = async () => {
       setTableLoading(true);
       try {
         const params = new URLSearchParams({
@@ -97,8 +101,6 @@ export function Attendance() {
         setTableLoading(false);
       }
     };
-    load();
-  }, [pagination.page, pagination.limit, sorting, selectedEventId, search]);
 
   // Handle form submission
   const handleAddOrUpdate = async (id?: number) => {
@@ -172,15 +174,18 @@ export function Attendance() {
   };
 
   const handleBulkDelete = async () => {
-    if (!confirm(`Delete ${selectedRows.size} selected records?`)) return;
-    try {
-      await api.post('/attendance/bulk-delete', { ids: Array.from(selectedRows) });
-      toast.success('Bulk delete successful');
-      setSelectedRows(new Set());
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Bulk delete failed');
-    }
-  };
+  if (!confirm(`Delete ${selectedRows.size} selected records?`)) return;
+
+  try {
+    await api.post('/attendance/bulk-delete', { ids: Array.from(selectedRows) });
+    toast.success('Bulk delete successful');
+    setSelectedRows(new Set());
+    // --- REFRESH DATA ---
+    await load(); // reuse existing load logic
+  } catch (e: any) {
+    toast.error(e.response?.data?.error || 'Bulk delete failed');
+  }
+};
 
   const handleUploadComplete = (result: UploadResult) => {
     setUploadResult(result);
@@ -248,6 +253,7 @@ export function Attendance() {
         templateEndpoint="/attendance/template"
         exportParams={exportParams}
         uploadLabel="Upload Registrations"
+        onUploadComplete={load}
       />
 
       {/* Filters & Bulk Actions */}
@@ -337,6 +343,7 @@ export function Attendance() {
                 loading={tableLoading}
                 data={rows}
                 emptyMessage={selectedEventId ? `No attendance for "${selectedEventName}".` : 'No attendance records.'}
+                modulename='attendance'
               >
                 {/* Add/Edit Row */}
                 <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
@@ -465,7 +472,7 @@ export function Attendance() {
       <UploadResultModal
         result={uploadResult}
         isOpen={showUploadModal}
-        onClose={() => setShowUploadModal(false)}
+        onClose={() => setShowUploadModal(false)} 
       />
     </div>
   );

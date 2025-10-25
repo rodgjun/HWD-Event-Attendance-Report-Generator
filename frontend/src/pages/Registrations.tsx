@@ -237,6 +237,7 @@ const handleBulkDelete = async () => {
             templateEndpoint="/registrations/template"
             exportParams={exportParams}
             uploadLabel="Upload Registrations"
+            onUploadComplete={load}
           />
 
       <motion.div className="bg-white rounded-lg shadow-sm border overflow-hidden">
@@ -289,7 +290,7 @@ const handleBulkDelete = async () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              <TableContainer loading={tableLoading} data={rows} emptyMessage={selectedEventId > 0 ? `No registrations for "${selectedEventName}".` : 'No registrations.'}>
+              <TableContainer loading={tableLoading} data={rows} emptyMessage={selectedEventId > 0 ? `No registrations for "${selectedEventName}".` : 'No registrations.'} modulename="registrations">
                 {/* Add/Edit Row */}
                 <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
                   <td className="px-6 py-4"></td>

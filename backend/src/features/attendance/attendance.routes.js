@@ -355,6 +355,36 @@ attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req,
         continue;
       }
       seen.set(key, true);
+
+      // --- DB DUPLICATE CHECK (in addition to in-file seen) ---
+      const dbWhere = {
+        event_id: event.event_id,
+        [Op.or]: []
+      };
+      if (finalEmployeeNo && finalEmployeeNo !== 'NA') {
+        dbWhere[Op.or].push({ employee_no: finalEmployeeNo });
+      }
+      if (rawEmployeeName) {
+        dbWhere[Op.or].push(
+          sequelize.where(
+            sequelize.fn('LOWER', sequelize.col('employee_name')),
+            sequelize.fn('LOWER', rawEmployeeName)
+          )
+        );
+      }
+
+      const dbExisting = dbWhere[Op.or].length > 0
+        ? await Attendance.findOne({ where: dbWhere })
+        : null;
+
+      if (dbExisting) {
+        const reason = finalEmployeeNo && finalEmployeeNo !== 'NA'
+          ? `Employee ${finalEmployeeNo} already attended "${event_name}"`
+          : `Walk-in "${rawEmployeeName}" already recorded for "${event_name}"`;
+        skipped.push({ ...row, reason });
+        continue;
+      }
+      // --- END DB CHECK ---
       
       const validation_status = await computeValidationStatus(finalEmployeeNo !== 'NA' ? finalEmployeeNo : null, event.event_id);
       
@@ -377,6 +407,60 @@ attendanceRouter.post('/upload', requireAuth, upload.single('file'), async (req,
     res.json(response);
   } catch (e) {
     console.error('POST /attendance/upload error:', e);
+    next(e);
+  }
+});
+
+
+// GET /attendance/export - Export filtered attendance as Excel
+attendanceRouter.get('/export', requireAuth, async (req, res, next) => {
+  try {
+    const { event_id, search, sort = 'attendance_id', order = 'DESC' } = req.query;
+
+    const where = {};
+    if (event_id) where.event_id = Number(event_id);
+    if (search) {
+      where[Op.or] = [
+        { employee_name: { [Op.iLike]: `%${search}%` } },
+        { employee_no: { [Op.iLike]: `%${search}%` } }
+      ];
+    }
+
+    const rows = await Attendance.findAll({
+      where,
+      include: [{ model: Event, attributes: ['event_name'] }],
+      order: [[sort, order.toUpperCase()]],
+      raw: true,
+      nest: true
+    });
+
+    const data = rows.map(r => ({
+      'Attendance ID': r.attendance_id,
+      'Employee No': r.employee_no || 'N/A',
+      'Employee Name': r.employee_name || 'N/A',
+      'Department': r.department || 'N/A',
+      'Mode of Attendance': r.mode_of_attendance,
+      'Validation Status': r.validation_status,
+      'Event Name': r.event?.event_name || 'N/A'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendance');
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=attendance-export-${new Date().toISOString().slice(0, 10)}.xlsx`
+    );
+    res.send(buffer);
+  } catch (e) {
+    console.error('GET /attendance/export error:', e);
     next(e);
   }
 });
