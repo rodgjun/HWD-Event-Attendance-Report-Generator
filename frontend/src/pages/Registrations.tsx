@@ -55,9 +55,9 @@ export function Registrations() {
   const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
   const exportParams = {
-  ...(search && { search }),
-  ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
-};
+    ...(search && { search }),
+    ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
+  };
 
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
 
@@ -148,7 +148,7 @@ export function Registrations() {
   }
 
   const handleAddOrUpdate = useCallback(async (regId?: number) => {
-      if (selectedEventId === 0) {
+    if (selectedEventId === 0) {
       toast.error('Please select an event before adding/updating a registration.');
       return;
     }
@@ -207,19 +207,19 @@ export function Registrations() {
     sorting.sort === field ? (sorting.order === 'ASC' ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />) : null;
 
   // === Bulk Delete Handler ===
-const handleBulkDelete = async () => {
-  if (selectedRows.size === 0) return;
-  if (!confirm(`Delete ${selectedRows.size} record(s)?`)) return;
+  const handleBulkDelete = async () => {
+    if (selectedRows.size === 0) return;
+    if (!confirm(`Delete ${selectedRows.size} record(s)?`)) return;
 
-  try {
-    await api.post('/registrations/bulk-delete', { ids: Array.from(selectedRows) });
-    toast.success('Deleted successfully');
-    setSelectedRows(new Set());
-    await load();
-  } catch {
-    toast.error('Bulk delete failed');
-  }
-};
+    try {
+      await api.post('/registrations/bulk-delete', { ids: Array.from(selectedRows) });
+      toast.success('Deleted successfully');
+      setSelectedRows(new Set());
+      await load();
+    } catch {
+      toast.error('Bulk delete failed');
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -228,17 +228,16 @@ const handleBulkDelete = async () => {
         <h1 className="text-2xl font-bold text-gray-900">Registrations</h1>
         <div className="flex items-center gap-3">
           <SearchInput value={search} onChange={setSearch} placeholder="Search name or employee no..." />
-          
         </div>
       </div>
-        <FileActionsBar
-            uploadEndpoint="/registrations/upload"
-            exportEndpoint="/registrations/export"
-            templateEndpoint="/registrations/template"
-            exportParams={exportParams}
-            uploadLabel="Upload Registrations"
-            onUploadComplete={load}
-          />
+      <FileActionsBar
+        uploadEndpoint="/registrations/upload"
+        exportEndpoint="/registrations/export"
+        templateEndpoint="/registrations/template"
+        exportParams={exportParams}
+        uploadLabel="Upload Registrations"
+        onUploadComplete={load}
+      />
 
       <motion.div className="bg-white rounded-lg shadow-sm border overflow-hidden">
         {/* Event Filter + Bulk Delete */}
@@ -290,28 +289,69 @@ const handleBulkDelete = async () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              <TableContainer loading={tableLoading} data={rows} emptyMessage={selectedEventId > 0 ? `No registrations for "${selectedEventName}".` : 'No registrations.'} modulename="registrations">
-                {/* Add/Edit Row */}
-                <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
-                  <td className="px-6 py-4"></td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{editingRegId ? `Edit ${editingRegId}` : 'New'}</td>
-                  <td className="px-6 py-4"><input ref={el => inputRefs.current['employee_no'] = el} type="text" value={form.employee_no} onChange={handleEmployeeNoChange} className="w-full p-1 border rounded" /></td>
-                  <td className="px-6 py-4"><input type="text" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} className="w-full p-1 border rounded" placeholder="Required" /></td>
-                  <td className="px-6 py-4">
-                    <input list="departments" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} className="w-full p-1 border rounded" />
-                    <datalist id="departments">{departments.map(d => <option key={d} value={d} />)}</datalist>
-                  </td>
-                  <td className="px-6 py-4">
-                    <button onClick={() => handleAddOrUpdate(editingRegId || undefined)} disabled={loading || !form.employee_name || !form.event_id} className="text-green-600 mr-2">
-                      {editingRegId ? <PencilIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
-                    </button>
-                    <button onClick={cancelEdit} className="text-gray-400"><XMarkIcon className="w-4 h-4" /></button>
-                  </td>
-                </tr>
+              {/* Always-Visible Add/Edit Row */}
+              <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
+                <td className="px-6 py-4 w-10"></td> {/* Checkbox placeholder */}
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {editingRegId ? `Edit ${editingRegId}` : 'New'}
+                </td>
+                <td className="px-6 py-4">
+                  <input 
+                    ref={el => inputRefs.current['employee_no'] = el} 
+                    type="text" 
+                    value={form.employee_no} 
+                    onChange={handleEmployeeNoChange} 
+                    className="w-full p-1 border rounded text-sm" 
+                    placeholder="Optional" 
+                  />
+                </td>
+                <td className="px-6 py-4">
+                  <input 
+                    type="text" 
+                    value={form.employee_name} 
+                    onChange={e => setForm({ ...form, employee_name: e.target.value })} 
+                    className="w-full p-1 border rounded text-sm" 
+                    placeholder="Required" 
+                  />
+                </td>
+                <td className="px-6 py-4">
+                  <input 
+                    list="departments" 
+                    value={form.department} 
+                    onChange={e => setForm({ ...form, department: e.target.value })} 
+                    className="w-full p-1 border rounded text-sm" 
+                  />
+                  <datalist id="departments">{departments.map(d => <option key={d} value={d} />)}</datalist>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  <button 
+                    onClick={() => handleAddOrUpdate(editingRegId ?? undefined)} 
+                    disabled={!form.employee_name.trim() || selectedEventId === 0 || loading}
+                    className="text-green-600 hover:text-green-900 mr-2 disabled:opacity-50"
+                  >
+                    {editingRegId ? <PencilIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
+                  </button>
+                  <button onClick={cancelEdit} className="text-gray-400 hover:text-gray-600">
+                    <XMarkIcon className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
 
+              {/* Data Rows Only */}
+              <TableContainer 
+                loading={tableLoading} 
+                data={rows} 
+                emptyMessage={
+                  selectedEventId > 0 
+                    ? `No registrations for "${selectedEventName}". Use the row above to add the first one.` 
+                    : 'No registrations found. Use the row above to add your first entry.'
+                } 
+                modulename="registrations"
+                numColumns={6}
+              >
                 {rows.map(row => (
-                  <tr key={row.reg_id}>
-                    <td className="px-6 py-4">
+                  <tr key={row.reg_id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 w-10">
                       <input
                         type="checkbox"
                         checked={selectedRows.has(row.reg_id)}
@@ -323,13 +363,17 @@ const handleBulkDelete = async () => {
                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.reg_id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{row.reg_id}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_no || 'N/A'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.department || 'N/A'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <button onClick={() => startEdit(row)} className="text-blue-600 mr-2"><PencilIcon className="w-4 h-4" /></button>
-                      <button onClick={() => deleteRegistration(row.reg_id)} className="text-red-600"><TrashIcon className="w-4 h-4" /></button>
+                      <button onClick={() => startEdit(row)} className="text-blue-600 hover:text-blue-900 mr-2 p-1 rounded">
+                        <PencilIcon className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => deleteRegistration(row.reg_id)} className="text-red-600 hover:text-red-900 p-1 rounded">
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}

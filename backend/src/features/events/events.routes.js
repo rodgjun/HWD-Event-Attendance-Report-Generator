@@ -297,3 +297,55 @@ eventsRouter.post('/upload', requireAuth, upload.single('file'), async (req, res
     next(e);
   }
 });
+
+// GET /events/export - Export filtered events as Excel
+eventsRouter.get('/export', requireAuth, async (req, res, next) => {
+  try {
+    const { search, format = 'xlsx' } = req.query;
+    const where = search ? { event_name: { [Op.iLike]: `%${search}%` } } : {};
+    
+    const events = await Event.findAll({ where });
+    
+    const headers = ['Event ID', 'Event Type', 'Event Name', 'Event Date'];
+    const rows = events.map(e => [
+      e.event_id, e.event_type, e.event_name, e.event_date
+    ]);
+    
+    const data = [headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Events');
+    
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: format });
+    res.setHeader('Content-Type', `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`);
+    res.setHeader('Content-Disposition', `attachment; filename=events-${new Date().toISOString().split('T')[0]}.${format}`);
+    res.send(buffer);
+  } catch (e) {
+    console.error('GET /events/export error:', e);
+    next(e);
+  }
+});
+
+// GET /events/template - Download Excel template
+eventsRouter.get('/template', requireAuth, async (req, res, next) => {
+  try {
+    // Sample data
+    const templateData = [
+      ['Event Type', 'Event Name', 'Event Date'], // Headers
+      ['Seminar', 'Wellness Workshop', '2025-11-01'], // Sample row
+      ['Club 120', 'Fitness Session', '2025-11-15']
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(templateData);
+    
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Events Template');
+    
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=events-template.xlsx');
+    res.send(buffer);
+  } catch (e) {
+    console.error('GET /events/template error:', e);
+    next(e);
+  }
+});

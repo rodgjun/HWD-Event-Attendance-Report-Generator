@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../services/api';
 import { toast } from 'react-hot-toast';
 import { XMarkIcon, MagnifyingGlassIcon, PlusIcon, PencilIcon, TrashIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { FileActionsBar } from '../components/FileActionsBar';
+
 
 type Event = { event_id: number; event_type: string; event_name: string; event_date: string };
 
@@ -21,6 +23,9 @@ export function Events() {
   const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: 10, totalPages: 0 });
   const [showUploadResult, setShowUploadResult] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const exportParams = {
+    ...(search && { search })
+  };
 
   useEffect(() => {
     loadEvents();
@@ -243,21 +248,14 @@ export function Events() {
         </div>
       </div>
 
-      {/* Import Section */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <h3 className="text-lg font-medium mb-3 text-gray-900">Import Events</h3>
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-gray-700">Upload Events.csv or .xlsx:</label>
-          <input
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={upload}
-            disabled={loading}
-            className="border border-gray-300 p-2 rounded-md file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 text-sm"
-          />
-          {loading && <span className="text-sm text-blue-600">Uploading...</span>}
-        </div>
-      </div>
+      <FileActionsBar
+        uploadEndpoint="/events/upload"  // Custom handler if needed; component manages file select
+        exportEndpoint="/events/export"  // Pass search for filtered export
+        templateEndpoint="/events/template"
+        exportParams={exportParams}
+        uploadLabel="Upload Events"
+        onUploadComplete={loadEvents}
+      />
 
       {/* Events List */}
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">

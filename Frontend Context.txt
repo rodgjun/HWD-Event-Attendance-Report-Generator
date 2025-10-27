@@ -2,190 +2,230 @@ Frontend Context
 
 Attendance.tsx
 `
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { api } from '../services/api';
+import { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
+import { ChevronDownIcon, ChevronUpIcon, PlusIcon, PencilIcon, TrashIcon, XMarkIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { Toaster, toast } from 'react-hot-toast';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUpTrayIcon, ChevronDownIcon, ChevronUpIcon, PlayIcon } from '@heroicons/react/24/outline';
+import { api } from '../services/api';
+import { SearchInput } from '../components/SearchInput';
+import { EventFilterDropdown } from '../components/EventFilterDropdown';
+import { UploadResultModal } from '../components/UploadResultModal';
+import { TableContainer } from '../components/TableContainer';
+import { Pagination } from '../components/Pagination';
+import { FileActionsBar } from '../components/FileActionsBar';
+import { useNavigate } from 'react-router-dom';
 
-type AttendanceRow = { 
-  attendance_id: number; 
-  employee_no: string | null; 
-  employee_name: string | null; 
-  department: string | null; 
-  event_id: number; 
-  mode_of_attendance: 'Virtual' | 'Onsite'; 
+type AttendanceRow = {
+  attendance_id: number;
+  employee_no: string | null;
+  employee_name: string;
+  department: string | null;
+  mode_of_attendance: 'Virtual' | 'Onsite';
   validation_status: 'Registered' | 'Not Registered';
-  event?: { event_name: string; event_type: string; event_date: string };
+  event: { event_id: number; event_name: string };
 };
 
-type EventOption = { event_id: number; event_name: string };
+type PaginationData = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+type UploadResult = { inserted: number; skipped?: number; skip_details?: any[] };
 type DepartmentOption = string;
 
 export function Attendance() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [events, setEvents] = useState<EventOption[]>([]);
+  const [pagination, setPagination] = useState<PaginationData>({ total: 0, page: 1, limit: 10, totalPages: 0 });
+  const [search, setSearch] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState<number>(0);
+  const [selectedEventName, setSelectedEventName] =useState('');
+  const [sorting, setSorting] = useState({ sort: 'attendance_id', order: 'DESC' as 'ASC' | 'DESC' });
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [editingRegId, setEditingRegId] = useState<number | null>(null);
+  const [form, setForm] = useState({
+    employee_no: '',
+    employee_name: '',
+    department: '',
+    mode_of_attendance: 'Onsite' as 'Virtual' | 'Onsite',
+    event_id: 0
+  });
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
-  const [form, setForm] = useState<{ employee_no: string; employee_name: string; department: string; mode_of_attendance: 'Virtual' | 'Onsite'; event_name: string }>({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-  const [editingAttendance, setEditingAttendance] = useState<AttendanceRow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(true);
-  const [showFormSection, setShowFormSection] = useState(false);
-  
-  // Pagination and filtering state
-  const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [filters, setFilters] = useState({ event_name: '', employee_no: '', employee_name: '', department: '' });
-  const [sorting, setSorting] = useState({ sort: 'attendance_id', order: 'DESC' });
+  const [tableLoading, setTableLoading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
+  const exportParams = {
+    ...(search && { search }),
+    ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
+  };
+
+  const ChevronIcon = ({ field }: { field: string }) => 
+    sorting.sort === field ? (sorting.order === 'ASC' ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />) : null;
+
+  // Load departments once
   useEffect(() => {
-    loadEvents();
     loadDepartments();
-    load();
-  }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
-
-  async function loadEvents() {
-    try {
-      const res = await api.get('/events');
-      setEvents(res.data.events || []);
-    } catch (e: any) {
-      toast.error('Failed to load events');
-    }
-  }
+  }, []);
 
   async function loadDepartments() {
     try {
-      const res = await api.get('/attendance/departments');
+      const res = await api.get('/employees/departments');
       setDepartments(res.data);
     } catch (e: any) {
       toast.error('Failed to load departments');
     }
   }
 
-  async function load() {
-    try {
-      setError(null);
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        limit: pagination.limit.toString(),
-        sort: sorting.sort,
-        order: sorting.order,
-        ...(filters.event_name && { event_name: filters.event_name }),
-        ...(filters.employee_no && { employee_no: filters.employee_no }),
-        ...(filters.employee_name && { employee_name: filters.employee_name }),
-        ...(filters.department && { department: filters.department })
-      });
-      
-      const res = await api.get(`/attendance?${params}`);
-      setRows(res.data.attendance);
-      setPagination(res.data.pagination);
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to load attendance');
-    }
-  }
-  
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      await api.post('/attendance/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      toast.success('File uploaded successfully');
-      e.target.value = '';
-      await load();
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to upload file');
-    }
-  }
+  // Load attendance data
+  useEffect(() => {
+    
+    load();
+  }, [pagination.page, pagination.limit, sorting, selectedEventId, search]);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmedName = form.employee_name.trim();
-    if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
-      toast.error('Employee Name is required for walk-in attendance');
+  const load = async () => {
+      setTableLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: pagination.page.toString(),
+          limit: pagination.limit.toString(),
+          sort: sorting.sort,
+          order: sorting.order,
+          ...(selectedEventId && { event_id: selectedEventId.toString() }),
+          ...(search && { search })
+        });
+
+        const res = await api.get(`/attendance?${params}`);
+        setRows(res.data.attendance);
+        setPagination(res.data.pagination);
+      } catch (e: any) {
+        toast.error(e.response?.data?.error || 'Failed to load attendance');
+      } finally {
+        setTableLoading(false);
+      }
+    };
+
+  // Handle form submission
+  const handleAddOrUpdate = async (id?: number) => {
+    if (!form.employee_name.trim()) {
+      toast.error('Employee Name is required');
       return;
     }
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),
-      employee_name: trimmedName || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
-    try {
-      await api.post('/attendance', payload);
-      toast.success('Attendance added successfully');
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-      setEditingAttendance(null);
-      setShowFormSection(false);
-      await load();
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to create attendance');
-    }
-  }
-
-  async function updateAttendance(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingAttendance) return;
-    const trimmedName = form.employee_name.trim();
-    if (form.employee_no.trim() === '' && (!trimmedName || trimmedName.length < 2)) {
-      toast.error('Employee Name is required for walk-in attendance');
+    if (!form.event_id) {
+      toast.error('Event is required');
       return;
     }
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? '' : form.employee_no.trim(),
-      employee_name: trimmedName || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
-    try {
-      await api.put(`/attendance/${editingAttendance.attendance_id}`, payload);
-      toast.success('Attendance updated successfully');
-      setEditingAttendance(null);
-      setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-      setShowFormSection(false);
-      await load();
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || 'Failed to update attendance');
-    }
-  }
 
-  async function deleteAttendance(id: number) {
-    if (!confirm('Are you sure?')) return;
+    const payload = {
+      employee_no: form.employee_no.trim() || null,
+      employee_name: form.employee_name.trim(),
+      department: form.department.trim() || null,
+      mode_of_attendance: form.mode_of_attendance,
+      event_id: form.event_id
+    };
+
+    try {
+      if (id) {
+        await api.put(`/attendance/${id}`, payload);
+        toast.success('Attendance updated');
+      } else {
+        await api.post('/attendance', payload);
+        toast.success('Attendance added');
+      }
+      resetForm();
+      setSelectedRows(new Set());
+    } catch (e: any) {
+      toast.error(e.response?.data?.details || e.response?.data?.error || 'Operation failed');
+    }
+  };
+
+  const resetForm = () => {
+    setEditingRegId(null);
+    setForm({
+      employee_no: '',
+      employee_name: '',
+      department: '',
+      mode_of_attendance: 'Onsite',
+      event_id: selectedEventId || 0
+    });
+  };
+
+  const startEdit = (row: AttendanceRow) => {
+    setEditingRegId(row.attendance_id);
+    setForm({
+      employee_no: row.employee_no || '',
+      employee_name: row.employee_name,
+      department: row.department || '',
+      mode_of_attendance: row.mode_of_attendance,
+      event_id: row.event.event_id
+    });
+    inputRefs.current['employee_no']?.focus();
+  };
+
+  const cancelEdit = () => {
+    resetForm();
+  };
+
+  const deleteRegistration = async (id: number) => {
+    if (!confirm('Delete this attendance record?')) return;
     try {
       await api.delete(`/attendance/${id}`);
-      toast.success('Attendance deleted');
-      await load();
+      toast.success('Deleted');
     } catch (e: any) {
-      toast.error('Failed to delete attendance');
+      toast.error(e.response?.data?.error || 'Delete failed');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+  if (!confirm(`Delete ${selectedRows.size} selected records?`)) return;
+
+  try {
+    await api.post('/attendance/bulk-delete', { ids: Array.from(selectedRows) });
+    toast.success('Bulk delete successful');
+    setSelectedRows(new Set());
+    // --- REFRESH DATA ---
+    await load(); // reuse existing load logic
+  } catch (e: any) {
+    toast.error(e.response?.data?.error || 'Bulk delete failed');
+  }
+};
+
+  const handleUploadComplete = (result: UploadResult) => {
+    setUploadResult(result);
+    setShowUploadModal(true);
+  };
+
+  // Employee lookup
+  async function handleEmployeeNoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const no = e.target.value.trim();
+    setForm({ ...form, employee_no: no });
+    if (no && no !== 'NA') {
+      try {
+        const res = await api.get(`/employees/by-number/${no}`);
+        setForm(prev => ({ ...prev, employee_name: res.data.employee_name || '', department: res.data.department || '' }));
+      } catch (e: any) {
+        if (e.response?.status === 404) {
+          setForm(prev => ({ ...prev, employee_name: '', department: '' }));
+        } else {
+          toast.error('Lookup failed');
+        }
+      }
+    } else {
+      setForm(prev => ({ ...prev, employee_name: '', department: '' }));
     }
   }
 
-  function startEdit(attendance: AttendanceRow) {
-    setEditingAttendance(attendance);
-    setForm({
-      employee_no: attendance.employee_no === 'NA' ? '' : (attendance.employee_no || ''),
-      employee_name: attendance.employee_name || '',
-      department: attendance.department || '',
-      mode_of_attendance: attendance.mode_of_attendance,
-      event_name: attendance.event?.event_name || ''
-    });
-    setShowFormSection(true);
-  }
-
-  function cancelEdit() {
-    setEditingAttendance(null);
-    setForm({ employee_no: '', employee_name: '', department: '', mode_of_attendance: 'Onsite', event_name: '' });
-    setShowFormSection(false);
-  }
-
-  function handleSort(field: string) {
-    const newOrder = sorting.sort === field && sorting.order === 'ASC' ? 'DESC' : 'ASC';
-    setSorting({ sort: field, order: newOrder });
-  }
+  // const ChevronIcon = ({ field }: { field: string }) => {
+  //   if (sorting.sort !== field) return null;
+  //   return sorting.order === 'ASC' ? (
+  //     <span className="ml-1 inline-block">↑</span>
+  //   ) : (
+  //     <span className="ml-1 inline-block">↓</span>
+  //   );
+  // };
 
   const handleKioskLaunch = () => {
     navigate('/kiosk');
@@ -194,518 +234,252 @@ export function Attendance() {
   return (
     <div className="space-y-6">
       <Toaster position="top-right" />
-      {/* Top Bar */}
-      <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
-        <h2 className="text-2xl font-bold text-gray-900">Attendance Management</h2>
-        <motion.button
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
+        <div className="flex items-center gap-3">
+          <SearchInput value={search} onChange={setSearch} placeholder="Search name or employee no..." />
+          {/* Kiosk Mode Button - Placeholder (will move beside search later) */}
+          <motion.button
           whileHover={{ scale: 1.02 }}
           onClick={handleKioskLaunch}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm font-medium"
         >
-          Launch Kiosk Mode
+          <PlayIcon className="w-4 h-4" />
+            Kiosk Mode
         </motion.button>
-      </div>
-
-      {/* Collapsible Filters */}
-      <motion.details open={showFilters} className="bg-white p-4 rounded-lg shadow-sm">
-        <summary className="cursor-pointer flex items-center justify-between font-medium text-gray-900">
-          Filters {showFilters ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
-        </summary>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <input className="border p-2 rounded" placeholder="Event Name" value={filters.event_name} onChange={e => setFilters({ ...filters, event_name: e.target.value })} />
-          <input className="border p-2 rounded" placeholder="Employee No" value={filters.employee_no} onChange={e => setFilters({ ...filters, employee_no: e.target.value })} />
-          <input className="border p-2 rounded" placeholder="Employee Name" value={filters.employee_name} onChange={e => setFilters({ ...filters, employee_name: e.target.value })} />
-          <input className="border p-2 rounded" placeholder="Department" value={filters.department} onChange={e => setFilters({ ...filters, department: e.target.value })} />
         </div>
-      </motion.details>
-
-      {/* Import Section */}
-      <div className="bg-white p-4 rounded-lg shadow-sm flex items-center gap-3">
-        <ArrowUpTrayIcon className="w-5 h-5" />
-        <label className="text-sm font-medium">Import Attendance:</label>
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={upload} className="border p-2 rounded file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-50" />
       </div>
 
-      {/* Collapsible Add/Edit Form */}
-      <div className="bg-white p-4 rounded-lg shadow-sm">
-      <button
-        onClick={() => setShowFormSection(!showFormSection)}
-        className="w-full flex items-center justify-between font-medium text-gray-900 py-2"
+      {/* File Actions */}
+      <FileActionsBar
+        uploadEndpoint="/attendance/upload"
+        exportEndpoint="/attendance/export"
+        templateEndpoint="/attendance/template"
+        exportParams={exportParams}
+        uploadLabel="Upload Registrations"
+        onUploadComplete={load}
+      />
+
+      {/* Filters & Bulk Actions */}
+      
+
+      {/* Table */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
       >
-        {editingAttendance ? 'Edit' : 'Add New Record'}
-        {showFormSection ? <ChevronUpIcon className="w-5 h-5" /> : <ChevronDownIcon className="w-5 h-5" />}
-      </button>
-      <AnimatePresence>
-        {showFormSection && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="mt-4 overflow-hidden"
+        {/* Event Filter + Bulk Delete */}
+        <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-gray-700">Event:</label>
+            <EventFilterDropdown selectedEventId={selectedEventId} onChange={setSelectedEventId} />
+          </div>
+
+        {selectedRows.size > 0 && (
+          <button
+            onClick={handleBulkDelete}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
+            aria-label={`Delete ${selectedRows.size} selected records`}
           >
-            <form onSubmit={editingAttendance ? updateAttendance : submit} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
-              <input className="border p-2 rounded" placeholder="Employee No (optional)" value={form.employee_no} onChange={e => setForm({ ...form, employee_no: e.target.value })} />
-              <input className="border p-2 rounded" placeholder="Employee Name" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} required={form.employee_no.trim() === ''} />
-              <input className="border p-2 rounded" placeholder="Department" list="departments-list" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} />
-              <datalist id="departments-list">{departments.map(dept => <option key={dept} value={dept} />)}</datalist>
-              <select className="border p-2 rounded" value={form.mode_of_attendance} onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as any })}>
-                <option>Onsite</option>
-                <option>Virtual</option>
-              </select>
-              <input className="border p-2 rounded" placeholder="Event Name" list="events-list" value={form.event_name} onChange={e => setForm({ ...form, event_name: e.target.value })} required />
-              <datalist id="events-list">{events.map(event => <option key={event.event_id} value={event.event_name} />)}</datalist>
-              <div className="flex gap-2 col-span-5">
-                <button className="bg-blue-600 text-white px-4 py-2 rounded flex-1" type="submit">
-                  {editingAttendance ? 'Update' : 'Add'} Attendance
-                </button>
-                {editingAttendance && <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded flex-1">Cancel</button>}
-              </div>
-            </form>
-          </motion.div>
+            <TrashIcon className="w-4 h-4" />
+            Delete ({selectedRows.size})
+          </button>
         )}
-      </AnimatePresence>
-    </div>
-      {/* Table with Sticky Header */}
-      <div className="overflow-x-auto bg-white rounded-lg shadow-sm">
-        <table className="min-w-full">
-          <thead className="bg-gray-100 sticky top-0">
-            <tr className="text-left">
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('attendance_id')}>ID {sorting.sort === 'attendance_id' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_no')}>Emp No {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_name')}>Name {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3 cursor-pointer hover:bg-gray-200" onClick={() => handleSort('department')}>Dept {sorting.sort === 'department' && (sorting.order === 'ASC' ? '↑' : '↓')}</th>
-              <th className="p-3">Mode</th>
-              <th className="p-3">Status</th>
-              <th className="p-3">Event</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.attendance_id} className="border-t hover:bg-gray-50">
-                <td className="p-3">{r.attendance_id}</td>
-                <td className="p-3">{r.employee_no || 'N/A'}</td>
-                <td className="p-3">{r.employee_name || 'N/A'}</td>
-                <td className="p-3">{r.department || 'N/A'}</td>
-                <td className="p-3">{r.mode_of_attendance}</td>
-                <td className="p-3"><span className={`px-2 py-1 rounded text-xs ${r.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{r.validation_status}</span></td>
-                <td className="p-3">{r.event?.event_name || 'N/A'}</td>
-                <td className="p-3">
-                  <div className="flex gap-2">
-                    <button onClick={() => startEdit(r)} className="bg-blue-500 text-white px-2 py-1 rounded text-sm">Edit</button>
-                    <button onClick={() => deleteAttendance(r.attendance_id)} className="bg-red-500 text-white px-2 py-1 rounded text-sm">Delete</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
+        <div className="w-full overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={selectedRows.size === rows.length && rows.length > 0}
+                    onChange={(e) => {
+                      setSelectedRows(e.target.checked ? new Set(rows.map(r => r.attendance_id)) : new Set());
+                    }}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'attendance_id',
+                    order: prev.sort === 'attendance_id' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
+                >
+                  ID <ChevronIcon field="attendance_id" />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'employee_no',
+                    order: prev.sort === 'employee_no' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
+                >
+                  Employee No <ChevronIcon field="employee_no" />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'employee_name',
+                    order: prev.sort === 'employee_name' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
+                >
+                  Employee Name <ChevronIcon field="employee_name" />
+                </th>
+                <th
+                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                  onClick={() => setSorting(prev => ({
+                    sort: 'department',
+                    order: prev.sort === 'department' && prev.order === 'ASC' ? 'DESC' : 'ASC'
+                  }))}
+                >
+                  Department <ChevronIcon field="department" />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Mode</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              <TableContainer
+                loading={tableLoading}
+                data={rows}
+                emptyMessage={selectedEventId ? `No attendance for "${selectedEventName}".` : 'No attendance records.'}
+                modulename='attendance'
+              >
+                {/* Add/Edit Row */}
+                <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
+                  <td className="px-6 py-4"></td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {editingRegId ? `Edit ${editingRegId}` : 'New'}
+                  </td>
+                  <td className="px-6 py-4">
+                    <input
+                      ref={el => inputRefs.current['employee_no'] = el}
+                      type="text"
+                      value={form.employee_no}
+                      onChange={handleEmployeeNoChange}
+                      className="w-full p-1 border rounded text-sm"
+                      placeholder="Optional"
+                    />
+                  </td>
+                  <td className="px-6 py-4">
+                    <input
+                      type="text"
+                      value={form.employee_name}
+                      onChange={e => setForm({ ...form, employee_name: e.target.value })}
+                      className="w-full p-1 border rounded text-sm"
+                      placeholder="Required"
+                    />
+                  </td>
+                  <td className="px-6 py-4">
+                    <input
+                      list="departments"
+                      value={form.department}
+                      onChange={e => setForm({ ...form, department: e.target.value })}
+                      className="w-full p-1 border rounded text-sm"
+                    />
+                    <datalist id="departments">
+                      {departments.map(d => <option key={d} value={d} />)}
+                    </datalist>
+                  </td>
+                  <td className="px-6 py-4">
+                    <select
+                      value={form.mode_of_attendance}
+                      onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as 'Virtual' | 'Onsite' })}
+                      className="w-full p-1 border rounded text-sm"
+                    >
+                      <option value="Onsite">Onsite</option>
+                      <option value="Virtual">Virtual</option>
+                    </select>
+                  </td>
+                  <td className="px-6 py-4 text-xs text-gray-500">—</td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={() => handleAddOrUpdate(editingRegId || undefined)}
+                      disabled={tableLoading || !form.employee_name || !form.event_id}
+                      className="text-green-600 mr-2 disabled:opacity-50"
+                    >
+                      {editingRegId ? <PencilIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
+                    </button>
+                    <button onClick={cancelEdit} className="text-gray-400">
+                      <XMarkIcon className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+
+                {/* Data Rows */}
+                {rows.map(row => (
+                  <tr key={row.attendance_id}>
+                    <td className="px-6 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.has(row.attendance_id)}
+                        onChange={(e) => {
+                          const newSet = new Set(selectedRows);
+                          e.target.checked ? newSet.add(row.attendance_id) : newSet.delete(row.attendance_id);
+                          setSelectedRows(newSet);
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.attendance_id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_no || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.department || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        row.mode_of_attendance === 'Onsite' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'
+                      }`}>
+                        {row.mode_of_attendance}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        row.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {row.validation_status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button onClick={() => startEdit(row)} className="text-blue-600 mr-2">
+                        <PencilIcon className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => deleteRegistration(row.attendance_id)} className="text-red-600">
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </TableContainer>
+            </tbody>
+          </table>
+        </div>
+      </motion.div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between bg-white p-4 rounded-lg shadow-sm">
-        <div className="text-sm text-gray-600">
+      <div className="flex justify-between items-center mt-6">
+        <div className="text-sm text-gray-700">
           Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
         </div>
-        <div className="flex gap-2">
-          <button disabled={pagination.page <= 1} onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })} className="px-3 py-1 border rounded disabled:opacity-50">Previous</button>
-          <span>Page {pagination.page} of {pagination.totalPages}</span>
-          <button disabled={pagination.page >= pagination.totalPages} onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })} className="px-3 py-1 border rounded disabled:opacity-50">Next</button>
-        </div>
-      </div>
-    </div>
-  );
-}`
-
-
-Events.tsx
-`
-import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { api } from '../services/api';
-import { toast } from 'react-hot-toast';
-import { XMarkIcon, MagnifyingGlassIcon, PlusIcon, PencilIcon, TrashIcon, CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
-
-type Event = { event_id: number; event_type: string; event_name: string; event_date: string };
-
-type Pagination = { total: number; page: number; limit: number; totalPages: number };
-
-type UploadResult = { inserted: number; skipped?: number; skip_details?: Array<{ reason: string; event_name?: string; event_type?: string }> };
-
-export function Events() {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [form, setForm] = useState({ event_type: '', event_name: '', event_date: '' });
-  const [editingEvent, setEditingEvent] = useState<Event | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [showUploadResult, setShowUploadResult] = useState(false);
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-
-  useEffect(() => {
-    loadEvents();
-  }, [pagination.page, pagination.limit, search]);
-
-  async function loadEvents() {
-    try {
-      setError(null);
-      const params = new URLSearchParams({
-        page: pagination.page.toString(),
-        limit: pagination.limit.toString(),
-        ...(search && { search: search.toLowerCase() })
-      });
-      const res = await api.get(`/events?${params}`);
-      setEvents(res.data.events || []);
-      setPagination(res.data.pagination || { total: 0, page: 1, limit: 10, totalPages: 0 });
-    } catch (e: any) {
-      setError('Failed to load events');
-      toast.error('Failed to load events');
-    }
-  }
-
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.post('/events/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      e.target.value = '';
-      setUploadResult(res.data);
-      setShowUploadResult(true);
-      toast.success(`Upload completed: ${res.data.inserted} events added`);
-      loadEvents();
-    } catch (e: any) {
-      setError(e.response?.data?.error || 'Failed to upload file');
-      toast.error('Upload failed');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function openModal(event?: Event) {
-    if (event) {
-      setEditingEvent(event);
-      setForm({
-        event_type: event.event_type,
-        event_name: event.event_name,
-        event_date: event.event_date.split('T')[0] // Format for input
-      });
-    } else {
-      setEditingEvent(null);
-      setForm({ event_type: '', event_name: '', event_date: '' });
-    }
-    setIsModalOpen(true);
-  }
-
-  function closeModal() {
-    setIsModalOpen(false);
-    setEditingEvent(null);
-    setForm({ event_type: '', event_name: '', event_date: '' });
-    setError(null);
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!form.event_name.trim() || !form.event_type.trim() || !form.event_date.trim()) {
-      toast.error('All fields are required');
-      return;
-    }
-    try {
-      setError(null);
-      if (editingEvent) {
-        await api.put(`/events/${editingEvent.event_id}`, form);
-        toast.success('Event updated successfully');
-      } else {
-        await api.post('/events', form);
-        toast.success('Event added successfully');
-      }
-      closeModal();
-      loadEvents();
-    } catch (e: any) {
-      setError(e.response?.data?.error || 'Failed to save event');
-      toast.error(e.response?.data?.error || 'Failed to save event');
-    }
-  }
-
-  function handlePageChange(newPage: number) {
-    setPagination({ ...pagination, page: newPage });
-  }
-
-  function handleLimitChange(newLimit: number) {
-    setPagination({ ...pagination, page: 1, limit: newLimit });
-  }
-
-  const ErrorAlert = () => error ? (
-    <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm mb-4 transition-all">
-      {error}
-    </div>
-  ) : null;
-
-  const UploadResultModal = ({ isOpen, onClose, result }: { isOpen: boolean; onClose: () => void; result: UploadResult | null }) => (
-    <AnimatePresence>
-      {isOpen && result && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-25 p-4"
-        >
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-2">
-                <CheckCircleIcon className="w-6 h-6 text-green-600" />
-                <h3 className="text-lg font-semibold text-gray-900">Upload Summary</h3>
-              </div>
-              <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-                <XMarkIcon className="w-6 h-6" />
-              </button>
-            </div>
-            <div className="space-y-2">
-              <p className="text-green-600 font-medium">✅ {result.inserted} events added successfully</p>
-              {result.skipped && result.skipped > 0 && (
-                <>
-                  <p className="text-yellow-600 font-medium flex items-center gap-1">
-                    <ExclamationTriangleIcon className="w-5 h-5" />
-                    {result.skipped} events skipped (duplicates/errors)
-                  </p>
-                  {result.skip_details && result.skip_details.length > 0 && (
-                    <ul className="mt-2 space-y-1 text-sm text-gray-700 bg-yellow-50 p-3 rounded-md">
-                      {result.skip_details.map((detail, idx) => (
-                        <li key={idx} className="flex items-center gap-2">
-                          • {detail.reason} {detail.event_name && `(Event: ${detail.event_name})`}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              )}
-            </div>
-            <button
-              onClick={onClose}
-              className="w-full mt-4 bg-gray-600 text-white py-2 rounded-md font-semibold hover:bg-gray-700 transition-colors"
-            >
-              Close
-            </button>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-
-  const PaginationControls = () => (
-    <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-6">
-      <div className="text-sm text-gray-700">
-        Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} events
-      </div>
-      <div className="flex items-center gap-2">
-        <select
-          value={pagination.limit}
-          onChange={(e) => handleLimitChange(Number(e.target.value))}
-          className="border border-gray-300 rounded-md px-2 py-1 text-sm"
-        >
-          <option value={10}>10 per page</option>
-          <option value={25}>25 per page</option>
-          <option value={50}>50 per page</option>
-        </select>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => handlePageChange(pagination.page - 1)}
-            disabled={pagination.page === 1}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50"
-          >
-            Previous
-          </button>
-          <span className="px-3 py-1 text-sm font-medium">{pagination.page} / {pagination.totalPages}</span>
-          <button
-            onClick={() => handlePageChange(pagination.page + 1)}
-            disabled={pagination.page === pagination.totalPages}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="space-y-6 max-w-6xl mx-auto p-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Events Management</h2>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search events..."
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setPagination({ ...pagination, page: 1 }); }}
-              className="pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 w-64 text-sm transition-colors"
-            />
-          </div>
-          <button
-            onClick={() => openModal()}
-            className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-700 transition-colors shadow-sm"
-            disabled={loading}
-            title="Add Event"
-          >
-            <PlusIcon className="w-5 h-5" />
-          </button>
-        </div>
+        <Pagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          onPageChange={p => setPagination({ ...pagination, page: p })}
+          disabled={tableLoading}
+        />
       </div>
 
-      {/* Import Section */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <h3 className="text-lg font-medium mb-3 text-gray-900">Import Events</h3>
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-gray-700">Upload Events.csv or .xlsx:</label>
-          <input
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={upload}
-            disabled={loading}
-            className="border border-gray-300 p-2 rounded-md file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 text-sm"
-          />
-          {loading && <span className="text-sm text-blue-600">Uploading...</span>}
-        </div>
-      </div>
-
-      {/* Events List */}
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {events.map((event) => (
-          <div key={event.event_id} className="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow border border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">{event.event_name}</h3>
-            <p className="text-sm text-gray-600 mb-2">{event.event_type}</p>
-            <p className="text-sm text-blue-600 font-medium">{new Date(event.event_date).toLocaleDateString()}</p>
-            <div className="mt-4 flex gap-2">
-              <button
-                onClick={() => openModal(event)}
-                className="text-blue-600 hover:text-blue-500 p-1 rounded transition-colors"
-                title="Edit"
-              >
-                <PencilIcon className="w-4 h-4" />
-              </button>
-              <button
-                onClick={async () => {
-                  if (confirm('Are you sure you want to delete this event?')) {
-                    await api.delete(`/events/${event.event_id}`);
-                    loadEvents();
-                    toast.success('Event deleted');
-                  }
-                }}
-                className="text-red-600 hover:text-red-500 p-1 rounded transition-colors"
-                title="Delete"
-              >
-                <TrashIcon className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-      {events.length === 0 && !loading && (
-        <p className="text-center text-gray-500 py-8 text-lg">No events yet. Add one to get started—it's quick and easy!</p>
-      )}
-      {pagination.total > 0 && <PaginationControls />}
-
-      {/* Add/Edit Event Modal */}
-      <AnimatePresence>
-        {isModalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-25 p-4"
-            onClick={closeModal}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">
-                  {editingEvent ? 'Edit Event' : 'Add New Event'}
-                </h3>
-                <button onClick={closeModal} className="text-gray-400 hover:text-gray-600">
-                  <XMarkIcon className="w-6 h-6" />
-                </button>
-              </div>
-
-              <ErrorAlert />
-
-              <form onSubmit={submit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
-                  <input
-                    type="text"
-                    value={form.event_type}
-                    onChange={(e) => setForm({ ...form, event_type: e.target.value })}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g., Wellness Seminar"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Name</label>
-                  <input
-                    type="text"
-                    value={form.event_name}
-                    onChange={(e) => setForm({ ...form, event_name: e.target.value })}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g., Yoga Session"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Event Date</label>
-                  <input
-                    type="date"
-                    value={form.event_date}
-                    onChange={(e) => setForm({ ...form, event_date: e.target.value })}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-
-                <div className="flex space-x-3 pt-4">
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    type="button"
-                    onClick={closeModal}
-                    className="flex-1 bg-gray-200 text-gray-800 py-2 rounded-md hover:bg-gray-300 transition-colors"
-                  >
-                    Cancel
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    type="submit"
-                    disabled={loading}
-                    className="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
-                  >
-                    {loading ? 'Saving...' : (editingEvent ? 'Update' : 'Add')} Event
-                  </motion.button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <UploadResultModal isOpen={showUploadResult} onClose={() => setShowUploadResult(false)} result={uploadResult} />
+      {/* Upload Result Modal */}
+      <UploadResultModal
+        result={uploadResult}
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)} 
+      />
     </div>
   );
 }`
@@ -1070,424 +844,365 @@ export function NotFound() {
 
 Registrations.tsx
 `
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { api } from '../services/api';
+import { Toaster, toast } from 'react-hot-toast';
+import { motion } from 'framer-motion';
+import { 
+  ChevronDownIcon, 
+  ChevronUpIcon, 
+  PencilIcon, 
+  TrashIcon, 
+  PlusIcon,
+  XMarkIcon
+} from '@heroicons/react/24/outline';
+
+import { SearchInput } from '../components/SearchInput';
+import { EventFilterDropdown } from '../components/EventFilterDropdown';
+import { UploadResultModal } from '../components/UploadResultModal';
+import { TableContainer } from '../components/TableContainer';
+import { Pagination } from '../components/Pagination';
+import { FileActionsBar } from '../components/FileActionsBar';
 
 type RegistrationRow = { 
   reg_id: number; 
   employee_no: string | null; 
-  employee_name: string | null; 
+  employee_name: string; 
   department: string | null; 
   event_id: number; 
-  event?: { event_name: string; event_type: string; event_date: string };
+  event?: { event_name: string };
 };
 
-type EventOption = { event_id: number; event_name: string };
-type DepartmentOption = string;
+type FormData = {
+  employee_no: string;
+  employee_name: string;
+  department: string;
+  event_id: number;
+};
+
+type UploadResult = { inserted: number; skipped?: number; skip_details?: any[] };
 
 export function Registrations() {
   const [rows, setRows] = useState<RegistrationRow[]>([]);
-  const [events, setEvents] = useState<EventOption[]>([]); // For event autocomplete
-  const [departments, setDepartments] = useState<DepartmentOption[]>([]); // For dept autocomplete
-  const [form, setForm] = useState({ employee_no: '', employee_name: '', department: '', event_name: '' });
-  const [editingRegistration, setEditingRegistration] = useState<RegistrationRow | null>(null);
-  const [error, setError] = useState<string | null>(null); // For user-facing errors
-  
-  // Pagination and filtering state
+  const [departments, setDepartments] = useState<string[]>([]);
+  const [form, setForm] = useState<FormData>({ employee_no: '', employee_name: '', department: '', event_id: 0 });
+  const [editingRegId, setEditingRegId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState<number>(0);
+  const [selectedEventName, setSelectedEventName] = useState<string>('');
+  const [tableLoading, setTableLoading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 10, totalPages: 0 });
-  const [filters, setFilters] = useState({ 
-    event_name: '', 
-    employee_no: '', 
-    employee_name: '', 
-    department: ''
-  });
-  const [sorting, setSorting] = useState({ sort: 'reg_id', order: 'DESC' });
+  const [search, setSearch] = useState('');
+  const [sorting, setSorting] = useState({ sort: 'reg_id', order: 'DESC' as 'ASC' | 'DESC' });
 
-  async function loadEvents() {
-    try {
-      const res = await api.get('/events'); // Assumes /events endpoint returns all events
-      setEvents(res.data.events || []);
-    } catch (e: any) {
-      console.error('Failed to load events:', e);
-      setError('Failed to load events for autocomplete');
-    }
-  }
+  const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
 
-  async function loadDepartments() {
-    try {
-      const res = await api.get('/registrations/departments');
-      setDepartments(res.data);
-    } catch (e: any) {
-      console.error('Failed to load departments:', e);
-      setError('Failed to load departments for autocomplete');
-    }
-  }
+  const exportParams = {
+  ...(search && { search }),
+  ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
+};
 
-  async function load() {
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+
+  // Add events state and fetch events
+  const [events, setEvents] = useState<{ event_id: number; event_name: string }[]>([]);
+
+  useEffect(() => {
+    api.get('/events/all')
+      .then(res => setEvents(res.data.events || []))
+      .catch(() => toast.error('Failed to load events'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Sync event name from dropdown
+  useEffect(() => {
+    const event = events.find(e => e.event_id === selectedEventId);
+    setForm(prev => ({ ...prev, event_id: selectedEventId }));
+    setSelectedEventName(event?.event_name || ''); // Always set
+  }, [selectedEventId, events]);
+
+  useEffect(() => {
+    setPagination(prev => ({ ...prev, page: 1 }));
+  }, [selectedEventId, search]);
+
+  useEffect(() => {
+    api.get('/registrations/departments')
+      .then(res => setDepartments(res.data))
+      .catch(() => toast.error('Failed to load departments'));
+  }, []);
+
+  const load = useCallback(async () => {
+    setTableLoading(true);
     try {
-      setError(null);
       const params = new URLSearchParams({
         page: pagination.page.toString(),
         limit: pagination.limit.toString(),
         sort: sorting.sort,
         order: sorting.order,
-        ...(filters.event_name && { event_name: filters.event_name }),
-        ...(filters.employee_no && { employee_no: filters.employee_no }),
-        ...(filters.employee_name && { employee_name: filters.employee_name }),
-        ...(filters.department && { department: filters.department })
+        ...(search && { search }),
+        ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
       });
-      
       const res = await api.get(`/registrations?${params}`);
       setRows(res.data.registrations);
       setPagination(res.data.pagination);
-    } catch (e: any) {
-      console.error('Failed to load registrations:', e);
-      setError(e.response?.data?.error || 'Failed to load registrations');
+    } catch {
+      toast.error('Failed to load data');
+    } finally {
+      setTableLoading(false);
     }
-  }
-  
-  useEffect(() => { 
-    loadEvents();
-    loadDepartments();
-    load(); 
-  }, [pagination.page, pagination.limit, sorting.sort, sorting.order, filters.event_name, filters.employee_no, filters.employee_name, filters.department]);
+  }, [pagination.page, pagination.limit, sorting, search, selectedEventId]);
 
-  async function upload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  useEffect(() => { load(); }, [load]);
+
+  // Upload handler
+  const handleUpload = async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
     try {
-      setError(null);
-      await api.post('/registrations/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const res = await api.post('/registrations/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setUploadResult(res.data);
+      setShowUploadModal(true);
       await load();
-    } catch (e: any) {
-      console.error('Failed to upload file:', e);
-      setError(e.response?.data?.error || 'Failed to upload file');
+    } catch {
+      toast.error('Upload failed');
+    }
+  };
+
+  // Employee lookup
+  async function handleEmployeeNoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const no = e.target.value.trim();
+    setForm({ ...form, employee_no: no });
+    if (no && no !== 'NA') {
+      try {
+        const res = await api.get(`/employees/by-number/${no}`);
+        setForm(prev => ({ ...prev, employee_name: res.data.employee_name || '', department: res.data.department || '' }));
+      } catch (e: any) {
+        if (e.response?.status === 404) {
+          setForm(prev => ({ ...prev, employee_name: '', department: '' }));
+        } else {
+          toast.error('Lookup failed');
+        }
+      }
+    } else {
+      setForm(prev => ({ ...prev, employee_name: '', department: '' }));
     }
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? null : form.employee_no.trim(),
-      employee_name: form.employee_name.trim() || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
+  const handleAddOrUpdate = useCallback(async (regId?: number) => {
+      if (selectedEventId === 0) {
+      toast.error('Please select an event before adding/updating a registration.');
+      return;
+    }
+    if (!form.employee_name.trim()) {
+      toast.error('Employee Name is required');
+      return;
+    }
+    setLoading(true);
     try {
-      setError(null);
-      await api.post('/registrations', payload);
-      setForm({ employee_no: '', employee_name: '', department: '', event_name: '' });
+      const payload = { ...form, employee_no: form.employee_no || null, department: form.department || null };
+      if (regId && editingRegId) {
+        await api.put(`/registrations/${regId}`, payload);
+        toast.success('Updated');
+      } else {
+        await api.post('/registrations', payload);
+        toast.success('Added');
+      }
+      setForm({ employee_no: '', employee_name: '', department: '', event_id: selectedEventId });
+      setEditingRegId(null);
       await load();
-    } catch (e: any) {
-      console.error('Failed to create registration:', e);
-      setError(e.response?.data?.error || (e.response?.data?.details ? `Validation error: ${JSON.stringify(e.response.data.details)}` : 'Failed to create registration'));
+    } catch {
+      toast.error('Save failed');
+    } finally {
+      setLoading(false);
     }
-  }
+  }, [form, editingRegId, selectedEventId, load]);
 
-  async function updateRegistration(e: React.FormEvent) {
-    e.preventDefault();
-    if (!editingRegistration) return;
-    const payload = { 
-      ...form, 
-      employee_no: form.employee_no.trim() === '' ? null : form.employee_no.trim(),
-      employee_name: form.employee_name.trim() || null,
-      department: form.department.trim() || null,
-      event_name: form.event_name.trim()
-    };
-    try {
-      setError(null);
-      await api.put(`/registrations/${editingRegistration.reg_id}`, payload);
-      setEditingRegistration(null);
-      setForm({ employee_no: '', employee_name: '', department: '', event_name: '' });
-      await load();
-    } catch (e: any) {
-      console.error('Failed to update registration:', e);
-      setError(e.response?.data?.error || (e.response?.data?.details ? `Validation error: ${JSON.stringify(e.response.data.details)}` : 'Failed to update registration'));
-    }
-  }
-
-  async function deleteRegistration(id: number) {
-    if (!confirm('Are you sure you want to delete this registration?')) return;
-    try {
-      setError(null);
-      await api.delete(`/registrations/${id}`);
-      await load();
-    } catch (e: any) {
-      console.error('Failed to delete registration:', e);
-      setError('Failed to delete registration');
-    }
-  }
-
-  function startEdit(registration: RegistrationRow) {
-    setEditingRegistration(registration);
+  function startEdit(reg: RegistrationRow) {
+    setEditingRegId(reg.reg_id);
     setForm({
-      employee_no: registration.employee_no || '',
-      employee_name: registration.employee_name || '',
-      department: registration.department || '',
-      event_name: registration.event?.event_name || ''
+      employee_no: reg.employee_no || '',
+      employee_name: reg.employee_name,
+      department: reg.department || '',
+      event_id: reg.event_id
     });
-    setError(null);
+    setTimeout(() => inputRefs.current['employee_no']?.focus(), 0);
   }
 
   function cancelEdit() {
-    setEditingRegistration(null);
-    setForm({ employee_no: '', employee_name: '', department: '', event_name: '' });
-    setError(null);
+    setForm({ employee_no: '', employee_name: '', department: '', event_id: selectedEventId });
+    setEditingRegId(null);
   }
 
-  function handleSort(field: string) {
-    const newOrder = sorting.sort === field && sorting.order === 'ASC' ? 'DESC' : 'ASC';
-    setSorting({ sort: field, order: newOrder });
+  async function deleteRegistration(id: number) {
+    if (!confirm('Delete?')) return;
+    try {
+      await api.delete(`/registrations/${id}`);
+      toast.success('Deleted');
+      await load();
+    } catch {
+      toast.error('Delete failed');
+    }
   }
 
-  // Error display component
-  const ErrorAlert = () => error ? (
-    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-      {error}
-    </div>
-  ) : null;
+  const ChevronIcon = ({ field }: { field: string }) => 
+    sorting.sort === field ? (sorting.order === 'ASC' ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />) : null;
+
+  // === Bulk Delete Handler ===
+const handleBulkDelete = async () => {
+  if (selectedRows.size === 0) return;
+  if (!confirm(`Delete ${selectedRows.size} record(s)?`)) return;
+
+  try {
+    await api.post('/registrations/bulk-delete', { ids: Array.from(selectedRows) });
+    toast.success('Deleted successfully');
+    setSelectedRows(new Set());
+    await load();
+  } catch {
+    toast.error('Bulk delete failed');
+  }
+};
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Registrations</h2>
-      
-      <ErrorAlert />
-      
-      {/* Filters */}
-      <div className="bg-gray-50 p-4 rounded-lg">
-        <h3 className="text-lg font-medium mb-3">Filters</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Event Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Event Name" 
-              value={filters.event_name} 
-              onChange={e => setFilters({ ...filters, event_name: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Employee No</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Employee No" 
-              value={filters.employee_no} 
-              onChange={e => setFilters({ ...filters, employee_no: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Employee Name</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Employee Name" 
-              value={filters.employee_name} 
-              onChange={e => setFilters({ ...filters, employee_name: e.target.value })} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Department</label>
-            <input 
-              className="border p-2 w-full rounded" 
-              placeholder="Filter by Department" 
-              value={filters.department} 
-              onChange={e => setFilters({ ...filters, department: e.target.value })} 
-            />
-          </div>
+      <Toaster />
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Registrations</h1>
+        <div className="flex items-center gap-3">
+          <SearchInput value={search} onChange={setSearch} placeholder="Search name or employee no..." />
+          
         </div>
       </div>
-      
-      {/* Import Section */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium">Import Registrations:</label>
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={upload} className="border p-2 rounded" />
-      </div>
-      
-      {/* Add/Edit Form */}
-      <form onSubmit={editingRegistration ? updateRegistration : submit} className="grid grid-cols-4 gap-3 items-end">
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Employee No (optional)" 
-          value={form.employee_no} 
-          onChange={e => setForm({ ...form, employee_no: e.target.value })} 
-        />
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Employee Name" 
-          value={form.employee_name} 
-          onChange={e => setForm({ ...form, employee_name: e.target.value })} 
-        />
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Department" 
-          list="departments-list"
-          value={form.department} 
-          onChange={e => setForm({ ...form, department: e.target.value })} 
-        />
-        <datalist id="departments-list">
-          {departments.map(dept => <option key={dept} value={dept} />)}
-        </datalist>
-        <input 
-          className="border p-2 rounded" 
-          placeholder="Event Name" 
-          list="events-list"
-          value={form.event_name} 
-          onChange={e => setForm({ ...form, event_name: e.target.value })} 
-          required
-        />
-        <datalist id="events-list">
-          {events.map(event => <option key={event.event_id} value={event.event_name} />)}
-        </datalist>
-        <div className="flex gap-2 col-span-4">
-          <button className="bg-blue-600 text-white px-4 py-2 rounded" type="submit">
-            {editingRegistration ? 'Update' : 'Add'}
-          </button>
-          {editingRegistration && (
-            <button type="button" onClick={cancelEdit} className="bg-gray-600 text-white px-4 py-2 rounded">
-              Cancel
+        <FileActionsBar
+            uploadEndpoint="/registrations/upload"
+            exportEndpoint="/registrations/export"
+            templateEndpoint="/registrations/template"
+            exportParams={exportParams}
+            uploadLabel="Upload Registrations"
+            onUploadComplete={load}
+          />
+
+      <motion.div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+        {/* Event Filter + Bulk Delete */}
+        <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-gray-700">Event:</label>
+            <EventFilterDropdown selectedEventId={selectedEventId} onChange={setSelectedEventId} />
+          </div>
+
+          {/* Bulk Delete Button - Only if rows selected */}
+          {selectedRows.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
+              aria-label={`Delete ${selectedRows.size} selected records`}
+            >
+              <TrashIcon className="w-4 h-4" />
+              Delete ({selectedRows.size})
             </button>
           )}
         </div>
-      </form>
-      
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full bg-white border">
-          <thead>
-            <tr className="bg-gray-100 text-left">
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('reg_id')}>
-                Reg ID {sorting.sort === 'reg_id' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_no')}>
-                Emp No {sorting.sort === 'employee_no' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('employee_name')}>
-                Name {sorting.sort === 'employee_name' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border cursor-pointer hover:bg-gray-200" onClick={() => handleSort('department')}>
-                Dept {sorting.sort === 'department' && (sorting.order === 'ASC' ? '↑' : '↓')}
-              </th>
-              <th className="p-2 border">Event Name</th>
-              <th className="p-2 border">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.reg_id}>
-                <td className="p-2 border">{r.reg_id}</td>
-                <td className="p-2 border">{r.employee_no || 'N/A'}</td>
-                <td className="p-2 border">{r.employee_name || 'N/A'}</td>
-                <td className="p-2 border">{r.department || 'N/A'}</td>
-                <td className="p-2 border">{r.event?.event_name || 'N/A'}</td>
-                <td className="p-2 border">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => startEdit(r)}
-                      className="bg-blue-500 text-white px-2 py-1 rounded text-sm hover:bg-blue-600"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteRegistration(r.reg_id)}
-                      className="bg-red-500 text-white px-2 py-1 rounded text-sm hover:bg-red-600"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
+        <div className="w-full overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 w-10">
+                  <input
+                    type="checkbox"
+                    checked={selectedRows.size === rows.length && rows.length > 0}
+                    onChange={(e) => {
+                      setSelectedRows(e.target.checked ? new Set(rows.map(r => r.reg_id)) : new Set());
+                    }}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => setSorting(prev => ({ sort: 'reg_id', order: prev.sort === 'reg_id' && prev.order === 'ASC' ? 'DESC' : 'ASC' }))}>
+                  ID <ChevronIcon field="reg_id" />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => setSorting(prev => ({ sort: 'employee_no', order: prev.sort === 'employee_no' && prev.order === 'ASC' ? 'DESC' : 'ASC' }))}>
+                  Employee No <ChevronIcon field="employee_no" />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => setSorting(prev => ({ sort: 'employee_name', order: prev.sort === 'employee_name' && prev.order === 'ASC' ? 'DESC' : 'ASC' }))}>
+                  Employee Name <ChevronIcon field="employee_name" />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => setSorting(prev => ({ sort: 'department', order: prev.sort === 'department' && prev.order === 'ASC' ? 'DESC' : 'ASC' }))}>
+                  Department <ChevronIcon field="department" />
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-600">
-          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} registrations
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              <TableContainer loading={tableLoading} data={rows} emptyMessage={selectedEventId > 0 ? `No registrations for "${selectedEventName}".` : 'No registrations.'} modulename="registrations">
+                {/* Add/Edit Row */}
+                <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
+                  <td className="px-6 py-4"></td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{editingRegId ? `Edit ${editingRegId}` : 'New'}</td>
+                  <td className="px-6 py-4"><input ref={el => inputRefs.current['employee_no'] = el} type="text" value={form.employee_no} onChange={handleEmployeeNoChange} className="w-full p-1 border rounded" /></td>
+                  <td className="px-6 py-4"><input type="text" value={form.employee_name} onChange={e => setForm({ ...form, employee_name: e.target.value })} className="w-full p-1 border rounded" placeholder="Required" /></td>
+                  <td className="px-6 py-4">
+                    <input list="departments" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} className="w-full p-1 border rounded" />
+                    <datalist id="departments">{departments.map(d => <option key={d} value={d} />)}</datalist>
+                  </td>
+                  <td className="px-6 py-4">
+                    <button onClick={() => handleAddOrUpdate(editingRegId || undefined)} disabled={loading || !form.employee_name || !form.event_id} className="text-green-600 mr-2">
+                      {editingRegId ? <PencilIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
+                    </button>
+                    <button onClick={cancelEdit} className="text-gray-400"><XMarkIcon className="w-4 h-4" /></button>
+                  </td>
+                </tr>
+
+                {rows.map(row => (
+                  <tr key={row.reg_id}>
+                    <td className="px-6 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedRows.has(row.reg_id)}
+                        onChange={(e) => {
+                          const newSet = new Set(selectedRows);
+                          e.target.checked ? newSet.add(row.reg_id) : newSet.delete(row.reg_id);
+                          setSelectedRows(newSet);
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.reg_id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_no || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.department || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <button onClick={() => startEdit(row)} className="text-blue-600 mr-2"><PencilIcon className="w-4 h-4" /></button>
+                      <button onClick={() => deleteRegistration(row.reg_id)} className="text-red-600"><TrashIcon className="w-4 h-4" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </TableContainer>
+            </tbody>
+          </table>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
-            disabled={pagination.page <= 1}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Previous
-          </button>
-          <span className="px-3 py-1">
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
-          <button
-            onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
-            disabled={pagination.page >= pagination.totalPages}
-            className="px-3 py-1 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Next
-          </button>
+      </motion.div>
+
+      <div className="flex justify-between items-center mt-6">
+        <div className="text-sm text-gray-700">
+          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
         </div>
+        <Pagination page={pagination.page} totalPages={pagination.totalPages} onPageChange={p => setPagination({ ...pagination, page: p })} disabled={tableLoading} />
       </div>
+
+      <UploadResultModal 
+        result={uploadResult} 
+        isOpen={showUploadModal} 
+        onClose={() => setShowUploadModal(false)} 
+      />
     </div>
   );
-}
-
-
-`
+}`
 
 Reports.tsx
 `
-import { useEffect, useState } from 'react';
-import { api } from '../services/api';
-
-export function Reports() {
-  const [eventId, setEventId] = useState('');
-  const [summary, setSummary] = useState<any>(null);
-  const [overall, setOverall] = useState<any>(null);
-
-  async function load() {
-    if (eventId) {
-      const s = await api.get(`/reports/event-summary/${eventId}`);
-      setSummary(s.data);
-    }
-    const o = await api.get('/reports/overall');
-    setOverall(o.data);
-  }
-  useEffect(() => { load(); }, [eventId]);
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-xl font-semibold">Reports</h2>
-      <div className="flex items-center gap-3">
-        <input className="border p-2 rounded" placeholder="Event ID for summary" value={eventId} onChange={e => setEventId(e.target.value)} />
-      </div>
-      {summary && (
-        <div className="bg-white border rounded p-4">
-          <div className="font-medium mb-2">Event Summary</div>
-          <div className="grid grid-cols-5 gap-3 text-sm">
-            <div>Total: {summary.total}</div>
-            <div>Virtual: {summary.virtual}</div>
-            <div>Onsite: {summary.onsite}</div>
-            <div>Registered: {summary.registered}</div>
-            <div>Walk-ins: {summary.walkIns}</div>
-          </div>
-        </div>
-      )}
-      {overall && (
-        <div className="bg-white border rounded p-4">
-          <div className="font-medium mb-2">Top Departments</div>
-          <ul className="list-disc pl-6 text-sm">
-            {(overall.topDepartments || []).map((d: any) => (
-              <li key={d.department}>{d.department}: {d.count}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-
 
 `
 
@@ -1553,6 +1268,7 @@ export function AppLayout() {
               <NavLink to="/events" label="Events" />
               <NavLink to="/registrations" label="Registrations" />
               <NavLink to="/attendance" label="Attendance" />
+              <NavLink to="/evaluations" label="Evaluations" />
               <NavLink to="/reports" label="Reports" />
             </div>
 
@@ -1603,6 +1319,7 @@ export function AppLayout() {
               <NavLink to="/events" label="Events" onClick={() => setMobileMenuOpen(false)} />
               <NavLink to="/registrations" label="Registrations" onClick={() => setMobileMenuOpen(false)} />
               <NavLink to="/attendance" label="Attendance" onClick={() => setMobileMenuOpen(false)} />
+              <NavLink to="/evaluations" label="Evaluation" onClick={() => setMobileMenuOpen(false)} />
               <NavLink to="/reports" label="Reports" onClick={() => setMobileMenuOpen(false)} />
               {isAuthenticated ? (
                 <button
@@ -1628,7 +1345,10 @@ export function AppLayout() {
     <main className={`mx-auto max-w-6xl p-4 ${isKiosk ? 'pt-0' : 'pt-20'}`}>
       <Outlet />
     </main>
-    <Toaster position="top-right" containerStyle={{ zIndex: 9999 }} />  {/* Global, high z-index for kiosk fullscreen */}
+     {/* Only show Toaster when kiosk is active */}
+    {isKiosk && (
+      <Toaster position="top-right" containerStyle={{ zIndex: 9999 }} />
+    )}
     </div>
   );
 }`
@@ -1646,6 +1366,8 @@ import { Registrations } from './pages/Registrations';
 import { Attendance } from './pages/Attendance';
 import { Reports } from './pages/Reports';
 import { Login } from './pages/Login';
+import { Kiosk } from './pages/Kiosk';
+import { Evaluations } from './pages/Evaluations';
 
 const router = createBrowserRouter([
   {
@@ -1656,8 +1378,11 @@ const router = createBrowserRouter([
       { path: 'events', element: <Events /> },
       { path: 'registrations', element: <Registrations /> },
       { path: 'attendance', element: <Attendance /> },
+      { path: 'evaluations', element: <Evaluations /> }, // New route
       { path: 'reports', element: <Reports /> },
       { path: 'login', element: <Login /> },
+      // In createBrowserRouter children array
+      { path: 'kiosk', element: <Kiosk /> },
     ],
   },
 ]);
@@ -1709,7 +1434,7 @@ export function Kiosk() {
 
   async function loadEvents() {
     try {
-      const res = await api.get('/events');
+      const res = await api.get('/events/all');
       setEvents(res.data.events || []);
     } catch (e: any) {
       toast.error('Failed to load events');
@@ -1718,7 +1443,7 @@ export function Kiosk() {
 
   async function loadDepartments() {
     try {
-      const res = await api.get('attendance/departments');
+      const res = await api.get('employees/departments');
       setDepartments(res.data);
     } catch (e: any) {
       toast.error('Failed to load departments');
@@ -1844,6 +1569,680 @@ export function Kiosk() {
           </motion.form>
         )}
       </AnimatePresence>
+    </div>
+  );
+}`
+
+
+Evaluations.tsx
+`
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { api } from '../services/api';
+import { Toaster, toast } from 'react-hot-toast';
+import { 
+  ChevronDownIcon, ChevronUpIcon,
+  XMarkIcon, 
+  MagnifyingGlassIcon, 
+  PlusIcon, 
+  PencilIcon, 
+  TrashIcon, 
+  CheckCircleIcon, 
+  ExclamationTriangleIcon 
+} from '@heroicons/react/24/outline';
+import { SearchInput } from '../components/SearchInput';
+import { EventFilterDropdown } from '../components/EventFilterDropdown';
+import { UploadResultModal } from '../components/UploadResultModal';
+import { TableContainer } from '../components/TableContainer';
+import { Pagination } from '../components/Pagination';
+import { FileActionsBar } from '../components/FileActionsBar';
+
+type Evaluation = {
+  evaluation_id: number;
+  employee_no?: string;
+  employee_name: string;
+  event_id: number;
+  event: { event_name: string };
+  objectives_met?: string;
+  relevance?: string;
+  venue?: string;
+  activity?: string;
+  value_time_spent?: string;
+  overall_rating?: string;
+  topic_clear_effective?: string;
+  answered_questions?: string;
+  presentation_materials?: string;
+  session_helpful?: string;
+};
+
+type PaginationType = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+type UploadResult = {
+  inserted: number;
+  skipped?: number;
+  skip_details?: Array<{ reason: string; employee_name?: string; event_name?: string }>;
+};
+
+type FormData = {
+  employee_no: string;
+  employee_name: string;
+  event_id: number;
+  objectives_met: string;
+  relevance: string;
+  venue: string;
+  activity: string;
+  value_time_spent: string;
+  overall_rating: string;
+  topic_clear_effective: string;
+  answered_questions: string;
+  presentation_materials: string;
+  session_helpful: string;
+};
+
+interface AddEditModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  form: FormData;
+  onFormChange: (updates: Partial<FormData>) => void;
+  onSubmit: (e: React.FormEvent) => void;
+  error: string | null;
+  events: { event_id: number; event_name: string }[];
+  editingId: number | null;
+}
+
+function AddEditModal({ 
+  isOpen, 
+  onClose, 
+  form, 
+  onFormChange, 
+  onSubmit, 
+  error, 
+  events, 
+  editingId 
+}: AddEditModalProps) {
+  const ErrorAlert = () => error ? (
+    <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm mb-4 transition-all">
+      {error}
+    </div>
+  ) : null;
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.95 }}
+            animate={{ scale: 1 }}
+            exit={{ scale: 0.95 }}
+            className="bg-white rounded-lg p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {editingId ? 'Edit Evaluation' : 'Add Evaluation'}
+              </h3>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                <XMarkIcon className="w-6 h-6" />
+              </button>
+            </div>
+            <ErrorAlert />
+            <form onSubmit={onSubmit} className="space-y-6">
+              {/* Basic Info */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-gray-700">Basic Information</h4>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Employee No (optional)</label>
+                  <input
+                    type="text"
+                    value={form.employee_no}
+                    onChange={(e) => onFormChange({ employee_no: e.target.value })}
+                    className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Employee Name *</label>
+                  <input
+                    type="text"
+                    value={form.employee_name}
+                    onChange={(e) => onFormChange({ employee_name: e.target.value })}
+                    required
+                    className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Event *</label>
+                  <select
+                    value={form.event_id}
+                    onChange={(e) => onFormChange({ event_id: Number(e.target.value) })}
+                    required
+                    className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value={0}>Select Event</option>
+                    {events.map((event) => (
+                      <option key={event.event_id} value={event.event_id}>
+                        {event.event_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Criteria Legend */}
+              <div className="p-3 bg-gray-50 rounded-md text-xs text-gray-600">
+                <strong>Criteria:</strong> 5 – Excellent | 4 – Very Good | 3 – Good | 2 – Fair | 1 – Needs Improvement | NA – Not Applicable
+              </div>
+
+              {/* Overall Conduct of Activity */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-gray-700 border-b pb-1">Overall Conduct of Activity</h4>
+                {[
+                  { key: 'objectives_met', label: 'Objectives were met' },
+                  { key: 'relevance', label: 'Relevance' },
+                  { key: 'venue', label: 'Venue' },
+                  { key: 'activity', label: 'Activity' },
+                  { key: 'value_time_spent', label: 'Value of Time Spent' },
+                  { key: 'overall_rating', label: 'Overall Rating' }
+                ].map(({ key, label }) => (
+                  <div key={key}>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                    <select
+                      value={form[key as keyof FormData] || ''}
+                      onChange={(e) => onFormChange({ [key]: e.target.value } as Partial<FormData>)}
+                      className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                    >
+                      <option value="">Select</option>
+                      {['1', '2', '3', '4', '5', 'NA'].map((val) => (
+                        <option key={val} value={val}>{val}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              {/* Resource Speaker */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-gray-700 border-b pb-1">Resource Speaker</h4>
+                {[
+                  { key: 'topic_clear_effective', label: 'Discussed topic clearly and effectively' },
+                  { key: 'answered_questions', label: 'Answered questions appropriately' },
+                  { key: 'presentation_materials', label: 'Presentation/materials' }
+                ].map(({ key, label }) => (
+                  <div key={key}>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                    <select
+                      value={form[key as keyof FormData] || ''}
+                      onChange={(e) => onFormChange({ [key]: e.target.value } as Partial<FormData>)}
+                      className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                    >
+                      <option value="">Select</option>
+                      {['1', '2', '3', '4', '5', 'NA'].map((val) => (
+                        <option key={val} value={val}>{val}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              {/* Session Helpful */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium text-gray-700 border-b pb-1">Session Feedback</h4>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">This session was helpful</label>
+                  <select
+                    value={form.session_helpful || ''}
+                    onChange={(e) => onFormChange({ session_helpful: e.target.value })}
+                    className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value="">Select</option>
+                    <option value="Yes">Yes</option>
+                    <option value="No">No</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 text-sm font-medium"
+              >
+                {editingId ? 'Update' : 'Add'} Evaluation
+              </button>
+            </form>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// Helper to compute average rating (ignores 'NA')
+function computeAverage(ratings: (string | undefined)[]): string {
+  const valid = ratings.filter(r => r && r !== 'NA').map(Number);
+  return valid.length > 0 ? (valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1) : 'N/A';
+}
+
+export function Evaluations() {
+  const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+  const [form, setForm] = useState<FormData>({
+    employee_no: '',
+    employee_name: '',
+    event_id: 0,
+    objectives_met: '',
+    relevance: '',
+    venue: '',
+    activity: '',
+    value_time_spent: '',
+    overall_rating: '',
+    topic_clear_effective: '',
+    answered_questions: '',
+    presentation_materials: '',
+    session_helpful: ''
+  });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState<number>(0);
+  const [loading, setLoading] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [pagination, setPagination] = useState<PaginationType>({ total: 0, page: 1, limit: 10, totalPages: 0 });
+  const [showUploadResult, setShowUploadResult] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [events, setEvents] = useState<{ event_id: number; event_name: string }[]>([]);
+  const [tableLoading, setTableLoading] = useState(false);
+  const [sortBy, setSortBy] = useState<string>('evaluation_id');
+  const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('DESC');
+
+  const exportParams = {
+    ...(search && { search }),
+    ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
+  };
+
+  const handleFormChange = useCallback((updates: Partial<FormData>) => {
+    setForm(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+    setEditingId(null);
+    setForm({
+      employee_no: '',
+      employee_name: '',
+      event_id: 0,
+      objectives_met: '',
+      relevance: '',
+      venue: '',
+      activity: '',
+      value_time_spent: '',
+      overall_rating: '',
+      topic_clear_effective: '',
+      answered_questions: '',
+      presentation_materials: '',
+      session_helpful: ''
+    });
+    setError(null);
+  }, []);
+
+  const handleOpenModal = useCallback((evaluation?: Evaluation) => {
+    if (evaluation) {
+      setEditingId(evaluation.evaluation_id);
+      setForm({
+        employee_no: evaluation.employee_no || '',
+        employee_name: evaluation.employee_name,
+        event_id: evaluation.event_id,
+        objectives_met: evaluation.objectives_met || '',
+        relevance: evaluation.relevance || '',
+        venue: evaluation.venue || '',
+        activity: evaluation.activity || '',
+        value_time_spent: evaluation.value_time_spent || '',
+        overall_rating: evaluation.overall_rating || '',
+        topic_clear_effective: evaluation.topic_clear_effective || '',
+        answered_questions: evaluation.answered_questions || '',
+        presentation_materials: evaluation.presentation_materials || '',
+        session_helpful: evaluation.session_helpful || ''
+      });
+    } else {
+      setEditingId(null);
+      setForm({
+        employee_no: '',
+        employee_name: '',
+        event_id: 0,
+        objectives_met: '',
+        relevance: '',
+        venue: '',
+        activity: '',
+        value_time_spent: '',
+        overall_rating: '',
+        topic_clear_effective: '',
+        answered_questions: '',
+        presentation_materials: '',
+        session_helpful: ''
+      });
+    }
+    setError(null);
+    setIsModalOpen(true);
+  }, []);
+
+  useEffect(() => {
+    loadEvents();
+    loadEvaluations();
+  }, [pagination.page, pagination.limit, search, selectedEventId, sortBy, sortOrder]);
+
+  async function loadEvents() {
+    try {
+      const res = await api.get('/events/all');
+      setEvents(res.data.events || []);
+    } catch (e: any) {
+      toast.error('Failed to load events');
+    }
+  }
+
+  async function loadEvaluations() {
+  try {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({
+      page: pagination.page.toString(),
+      limit: pagination.limit.toString(),
+      ...(search && { search }),
+      ...(selectedEventId > 0 && { event_id: selectedEventId.toString() }),
+      sort: sortBy,
+      order: sortOrder
+    });
+    const res = await api.get(`/evaluations?${params}`);
+    setEvaluations(res.data.evaluations || []);
+    setPagination(res.data.pagination || { total: 0, page: 1, limit: 10, totalPages: 0 });
+  } catch (e: any) {
+    setError('Failed to load evaluations');
+    toast.error('Failed to load evaluations');
+  } finally {
+    setLoading(false);
+  }
+}
+
+  const handleBulkDelete = async () => {
+  if (!confirm(`Delete ${selectedRows.size} selected records?`)) return;
+
+  try {
+    await api.post('/evaluations/bulk-delete', { ids: Array.from(selectedRows) });
+    toast.success('Bulk delete successful');
+    setSelectedRows(new Set());
+    // --- REFRESH DATA ---
+    await loadEvaluations(); // reuse existing load logic
+  } catch (e: any) {
+    toast.error(e.response?.data?.error || 'Bulk delete failed');
+  }
+};
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.employee_name.trim() || form.event_id === 0) {
+      toast.error('Employee name and event are required');
+      return;
+    }
+    try {
+      setError(null);
+      const payload = {
+        ...form,
+        employee_no: form.employee_no.trim() || undefined
+      };
+      if (editingId) {
+        await api.put(`/evaluations/${editingId}`, payload);
+        toast.success('Evaluation updated successfully');
+      } else {
+        await api.post('/evaluations', payload);
+        toast.success('Evaluation added successfully');
+      }
+      handleCloseModal();
+      loadEvaluations();
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Failed to save evaluation');
+      toast.error(e.response?.data?.error || 'Failed to save evaluation');
+    }
+  }
+
+  function handlePageChange(newPage: number) {
+    setPagination({ ...pagination, page: newPage });
+  }
+
+  function handleLimitChange(newLimit: number) {
+    setPagination({ ...pagination, page: 1, limit: newLimit });
+  }
+
+    function handleSearchChange(value: string) {
+    setSearch(value); // Immediate set; debounce handled in SearchInput
+    setPagination(prev => ({ ...prev, page: 1 })); // Reset page
+  }
+
+  function handleEventChange(eventId: number) {
+    setSelectedEventId(eventId);
+    setPagination({ ...pagination, page: 1 });
+  }
+
+  function handleSort(column: string) {
+    if (sortBy !== column) {
+      setSortBy(column);
+      setSortOrder('ASC');
+    } else {
+      setSortOrder(sortOrder === 'ASC' ? 'DESC' : 'ASC');
+    }
+    setPagination(prev => ({ ...prev, page: 1 }));
+  }
+
+  function toggleRow(id: number) {
+    const newSelected = new Set(selectedRows);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedRows(newSelected);
+  }
+
+  function toggleAll() {
+    if (selectedRows.size === evaluations.length) {
+      setSelectedRows(new Set());
+    } else {
+      setSelectedRows(new Set(evaluations.map(e => e.evaluation_id)));
+    }
+  }
+
+  const isAllSelected = evaluations.length > 0 && selectedRows.size === evaluations.length;
+
+  // Compute averages for each evaluation
+  const evaluationsWithAverages = evaluations.map(e => ({
+    ...e,
+    overallConductAvg: computeAverage([
+      e.objectives_met, e.relevance, e.venue, e.activity, 
+      e.value_time_spent, e.overall_rating
+    ]),
+    resourceSpeakerAvg: computeAverage([
+      e.topic_clear_effective, e.answered_questions, e.presentation_materials
+    ])
+  }));
+
+  const getSortIcon = (column: string) => {
+    if (sortBy !== column) return null;
+    return sortOrder === 'ASC' ? <ChevronUpIcon className="w-3 h-3 ml-1" /> : <ChevronDownIcon className="w-3 h-3 ml-1" />;
+  };
+
+  return (
+    <div className="space-y-6">
+      <Toaster />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-2xl font-bold text-gray-900">Evaluations</h1>
+        <div className="flex items-center gap-3">
+        <SearchInput value={search} onChange={handleSearchChange} placeholder="Search name or employee no..." />
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          onClick={() => handleOpenModal()}
+          className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-700 transition-colors shadow-sm"
+        >
+          <PlusIcon className="w-5 h-5" />
+        </motion.button>
+      </div>
+      </div>
+
+      <FileActionsBar
+        uploadEndpoint="/evaluations/upload"
+        exportEndpoint="/evaluations/export"
+        templateEndpoint="/evaluations/template"
+        exportParams={exportParams}
+        uploadLabel="Upload Registrations"
+        onUploadComplete={loadEvaluations}
+      />
+      
+      <div className="overflow-x-auto bg-white rounded-lg shadow">
+
+        {/* Event Filter + Bulk Delete */}
+        <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-gray-700">Event:</label>
+            <EventFilterDropdown selectedEventId={selectedEventId} onChange={setSelectedEventId} />
+          </div>
+
+        {selectedRows.size > 0 && (
+          <button
+            onClick={handleBulkDelete}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors shadow-sm"
+            aria-label={`Delete ${selectedRows.size} selected records`}
+          >
+            <TrashIcon className="w-4 h-4" />
+            Delete ({selectedRows.size})
+          </button>
+        )}
+      </div>
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={toggleAll}
+                  className="rounded border-gray-300"
+                />
+              </th>
+              <th 
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                onClick={() => handleSort('employee_no')}
+              >
+                Employee No {getSortIcon('employee_no')}
+              </th>
+              <th 
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                onClick={() => handleSort('employee_name')}
+              >
+                Name {getSortIcon('employee_name')}
+              </th>
+              <th 
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                // Note: Computed; sort by employee_name as fallback if needed
+              >
+                Overall Conduct Avg
+              </th>
+              <th 
+                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+              >
+                Resource Speaker Avg
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            <TableContainer loading={loading} data={evaluationsWithAverages} emptyMessage="No evaluations found." modulename="evaluations">
+              {evaluationsWithAverages.map((evaluation) => (
+                <tr key={evaluation.evaluation_id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={selectedRows.has(evaluation.evaluation_id)}
+                      onChange={() => toggleRow(evaluation.evaluation_id)}
+                      className="rounded border-gray-300"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {evaluation.employee_no || 'N/A'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {evaluation.employee_name}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {evaluation.overallConductAvg}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {evaluation.resourceSpeakerAvg}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                    <button
+                      onClick={() => handleOpenModal(evaluation)}
+                      className="text-indigo-600 hover:text-indigo-900"
+                    >
+                      <PencilIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (confirm('Delete this evaluation?')) {
+                          try {
+                            await api.delete(`/evaluations/${evaluation.evaluation_id}`);
+                            toast.success('Evaluation deleted');
+                            loadEvaluations();
+                          } catch (e: any) {
+                            toast.error('Delete failed');
+                          }
+                        }
+                      }}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </TableContainer>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <div className="flex justify-between items-center mt-6">
+        <div className="text-sm text-gray-700">
+          Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
+        </div>
+      <Pagination
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        onPageChange={handlePageChange}
+        disabled={loading}
+      />
+      </div>
+
+      <UploadResultModal
+        result={uploadResult}
+        isOpen={showUploadResult}
+        onClose={() => setShowUploadResult(false)}
+      />
+
+      <AddEditModal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        form={form}
+        onFormChange={handleFormChange}
+        onSubmit={handleSubmit}
+        error={error}
+        events={events}
+        editingId={editingId}
+      />
     </div>
   );
 }

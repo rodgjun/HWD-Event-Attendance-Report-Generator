@@ -33,7 +33,7 @@ export function Kiosk() {
 
   async function loadEvents() {
     try {
-      const res = await api.get('/events');
+      const res = await api.get('/events/all');
       setEvents(res.data.events || []);
     } catch (e: any) {
       toast.error('Failed to load events');

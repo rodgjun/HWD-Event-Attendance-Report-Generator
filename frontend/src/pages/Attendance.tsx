@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { PlusIcon, PencilIcon, TrashIcon, XMarkIcon, PlayIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, ChevronUpIcon, PlusIcon, PencilIcon, TrashIcon, XMarkIcon, PlayIcon } from '@heroicons/react/24/outline';
 import { Toaster, toast } from 'react-hot-toast';
 import { api } from '../services/api';
 import { SearchInput } from '../components/SearchInput';
@@ -28,6 +28,8 @@ type PaginationData = {
   totalPages: number;
 };
 
+type Event = { event_id: number; event_name: string };
+
 type UploadResult = { inserted: number; skipped?: number; skip_details?: any[] };
 type DepartmentOption = string;
 
@@ -46,24 +48,43 @@ export function Attendance() {
     employee_name: '',
     department: '',
     mode_of_attendance: 'Onsite' as 'Virtual' | 'Onsite',
-    event_id: 0
+    event_id: 0  // Only used for edits
   });
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [tableLoading, setTableLoading] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const inputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+  const [loading, setLoading] = useState(false);
 
   const exportParams = {
     ...(search && { search }),
     ...(selectedEventId > 0 && { event_id: selectedEventId.toString() })
   };
 
+  const ChevronIcon = ({ field }: { field: string }) => 
+    sorting.sort === field ? (sorting.order === 'ASC' ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />) : null;
+
+  const [events, setEvents] = useState<Event[]>([]);
+
+  useEffect(() => {
+    api.get('/events/all')  // Or '/events' per backend
+      .then(res => setEvents(res.data.events || []))
+      .catch(() => toast.error('Failed to load events'));
+  }, []);
+
 
   // Load departments once
   useEffect(() => {
     loadDepartments();
   }, []);
+
+  // Sync event name from dropdown
+  useEffect(() => {
+    const event = events.find(e => e.event_id === selectedEventId);
+    setForm(prev => ({ ...prev, event_id: selectedEventId }));
+    setSelectedEventName(event?.event_name || ''); // Always set
+  }, [selectedEventId, events]);
 
   async function loadDepartments() {
     try {
@@ -103,38 +124,47 @@ export function Attendance() {
     };
 
   // Handle form submission
-  const handleAddOrUpdate = async (id?: number) => {
-    if (!form.employee_name.trim()) {
-      toast.error('Employee Name is required');
-      return;
-    }
-    if (!form.event_id) {
-      toast.error('Event is required');
-      return;
-    }
-
+  const handleAddOrUpdate = useCallback(async (attendanceId?: number) => {
+  if (selectedEventId === 0) {
+    toast.error('Please select an event before adding/updating attendance.');
+    return;
+  }
+  if (!form.employee_name.trim()) {
+    toast.error('Employee Name is required');
+    return;
+  }
+  setTableLoading(true);
+  try {
     const payload = {
+      ...form,
       employee_no: form.employee_no.trim() || null,
-      employee_name: form.employee_name.trim(),
       department: form.department.trim() || null,
-      mode_of_attendance: form.mode_of_attendance,
-      event_id: form.event_id
+      event_id: attendanceId ? form.event_id : selectedEventId,  // Use row's event for edit; filter for new
+      mode_of_attendance: form.mode_of_attendance
     };
-
-    try {
-      if (id) {
-        await api.put(`/attendance/${id}`, payload);
-        toast.success('Attendance updated');
-      } else {
-        await api.post('/attendance', payload);
-        toast.success('Attendance added');
-      }
-      resetForm();
-      setSelectedRows(new Set());
-    } catch (e: any) {
-      toast.error(e.response?.data?.details || e.response?.data?.error || 'Operation failed');
+    if (attendanceId && editingRegId) {
+      await api.put(`/attendance/${attendanceId}`, payload);
+      toast.success('Attendance updated');
+    } else {
+      await api.post('/attendance', payload);
+      toast.success('Attendance added');
     }
-  };
+    // Reset form (use selectedEventId for new)
+    setForm({
+      employee_no: '',
+      employee_name: '',
+      department: '',
+      mode_of_attendance: 'Onsite',
+      event_id: selectedEventId
+    });
+    setEditingRegId(null);
+    await load();
+  } catch (e: any) {
+    toast.error(e.response?.data?.details || e.response?.data?.error || 'Save failed');
+  } finally {
+    setTableLoading(false);
+  }
+}, [form, editingRegId, selectedEventId, load]);
 
   const resetForm = () => {
     setEditingRegId(null);
@@ -154,7 +184,7 @@ export function Attendance() {
       employee_name: row.employee_name,
       department: row.department || '',
       mode_of_attendance: row.mode_of_attendance,
-      event_id: row.event.event_id
+      event_id: row.event.event_id  // Preserve original event
     });
     inputRefs.current['employee_no']?.focus();
   };
@@ -168,6 +198,7 @@ export function Attendance() {
     try {
       await api.delete(`/attendance/${id}`);
       toast.success('Deleted');
+      await load();
     } catch (e: any) {
       toast.error(e.response?.data?.error || 'Delete failed');
     }
@@ -212,14 +243,14 @@ export function Attendance() {
     }
   }
 
-  const ChevronIcon = ({ field }: { field: string }) => {
-    if (sorting.sort !== field) return null;
-    return sorting.order === 'ASC' ? (
-      <span className="ml-1 inline-block">↑</span>
-    ) : (
-      <span className="ml-1 inline-block">↓</span>
-    );
-  };
+  // const ChevronIcon = ({ field }: { field: string }) => {
+  //   if (sorting.sort !== field) return null;
+  //   return sorting.order === 'ASC' ? (
+  //     <span className="ml-1 inline-block">↑</span>
+  //   ) : (
+  //     <span className="ml-1 inline-block">↓</span>
+  //   );
+  // };
 
   const handleKioskLaunch = () => {
     navigate('/kiosk');
@@ -339,118 +370,116 @@ export function Attendance() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              <TableContainer
-                loading={tableLoading}
-                data={rows}
-                emptyMessage={selectedEventId ? `No attendance for "${selectedEventName}".` : 'No attendance records.'}
-                modulename='attendance'
-              >
-                {/* Add/Edit Row */}
-                <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
-                  <td className="px-6 py-4"></td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {editingRegId ? `Edit ${editingRegId}` : 'New'}
-                  </td>
-                  <td className="px-6 py-4">
-                    <input
-                      ref={el => inputRefs.current['employee_no'] = el}
-                      type="text"
-                      value={form.employee_no}
-                      onChange={handleEmployeeNoChange}
-                      className="w-full p-1 border rounded text-sm"
-                      placeholder="Optional"
-                    />
-                  </td>
-                  <td className="px-6 py-4">
-                    <input
-                      type="text"
-                      value={form.employee_name}
-                      onChange={e => setForm({ ...form, employee_name: e.target.value })}
-                      className="w-full p-1 border rounded text-sm"
-                      placeholder="Required"
-                    />
-                  </td>
-                  <td className="px-6 py-4">
-                    <input
-                      list="departments"
-                      value={form.department}
-                      onChange={e => setForm({ ...form, department: e.target.value })}
-                      className="w-full p-1 border rounded text-sm"
-                    />
-                    <datalist id="departments">
-                      {departments.map(d => <option key={d} value={d} />)}
-                    </datalist>
-                  </td>
-                  <td className="px-6 py-4">
-                    <select
-                      value={form.mode_of_attendance}
-                      onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as 'Virtual' | 'Onsite' })}
-                      className="w-full p-1 border rounded text-sm"
-                    >
-                      <option value="Onsite">Onsite</option>
-                      <option value="Virtual">Virtual</option>
-                    </select>
-                  </td>
-                  <td className="px-6 py-4 text-xs text-gray-500">—</td>
-                  <td className="px-6 py-4">
-                    <button
-                      onClick={() => handleAddOrUpdate(editingRegId || undefined)}
-                      disabled={tableLoading || !form.employee_name || !form.event_id}
-                      className="text-green-600 mr-2 disabled:opacity-50"
-                    >
+            {/* Always-Visible Add/Edit Row (Outside TableContainer) */}
+            <tr className={editingRegId ? 'bg-yellow-50' : 'bg-gray-50'}>
+              <td className="px-6 py-4 w-10"></td> {/* Checkbox placeholder */}
+              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                {editingRegId ? `Edit ${editingRegId}` : 'New'}
+              </td>
+              <td className="px-6 py-4">
+                <input
+                  ref={el => (inputRefs.current['employee_no'] = el)}
+                  type="text"
+                  value={form.employee_no}
+                  onChange={handleEmployeeNoChange}
+                  className="w-full p-1 border rounded text-sm"
+                  placeholder="Optional (or 'NA' for walk-in)"
+                />
+              </td>
+              <td className="px-6 py-4">
+                <input
+                  type="text"
+                  value={form.employee_name}
+                  onChange={e => setForm({ ...form, employee_name: e.target.value })}
+                  className="w-full p-1 border rounded text-sm"
+                  placeholder="Required"
+                />
+              </td>
+              <td className="px-6 py-4">
+                <input
+                  list="departments"
+                  value={form.department}
+                  onChange={e => setForm({ ...form, department: e.target.value })}
+                  className="w-full p-1 border rounded text-sm"
+                />
+                <datalist id="departments">{departments.map(d => <option key={d} value={d} />)}</datalist>
+              </td>
+              <td className="px-6 py-4">
+                <select
+                  value={form.mode_of_attendance}
+                  onChange={e => setForm({ ...form, mode_of_attendance: e.target.value as 'Virtual' | 'Onsite' })}
+                  className="w-full p-1 border rounded text-sm"
+                >
+                  <option value="Onsite">Onsite</option>
+                  <option value="Virtual">Virtual</option>
+                </select>
+              </td>
+              <td className="px-6 py-4 text-xs text-gray-500 italic">Computed on save</td> {/* Status placeholder */}
+              
+              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                <button onClick={() => handleAddOrUpdate(editingRegId || undefined)} className="text-green-600 mr-2">
                       {editingRegId ? <PencilIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
                     </button>
-                    <button onClick={cancelEdit} className="text-gray-400">
-                      <XMarkIcon className="w-4 h-4" />
+                    <button onClick={cancelEdit} className="text-gray-400"><XMarkIcon className="w-4 h-4" /></button>
+              </td>
+            </tr>
+
+            {/* Data Rows Only (Handled by TableContainer) */}
+            <TableContainer
+              loading={tableLoading}
+              data={rows}
+              emptyMessage={
+                selectedEventId
+                  ? `No existing attendance for "${selectedEventName}". Use the row above to add the first record.`
+                  : 'No attendance records found. Use the row above to add your first entry.'
+              }
+              modulename="attendance"
+              numColumns={9}  // Ensures proper colSpan alignment
+            >
+              {rows.map(row => (
+                <tr key={row.attendance_id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 w-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedRows.has(row.attendance_id)}
+                      onChange={e => {
+                        const newSet = new Set(selectedRows);
+                        e.target.checked ? newSet.add(row.attendance_id) : newSet.delete(row.attendance_id);
+                        setSelectedRows(newSet);
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{row.attendance_id}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_no || 'N/A'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-900">{row.employee_name}</td>
+                  <td className="px-6 py-4 text-sm text-gray-900">{row.department || 'N/A'}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      row.mode_of_attendance === 'Onsite' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'
+                    }`}>
+                      {row.mode_of_attendance}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      row.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                    }`}>
+                      {row.validation_status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <button onClick={() => startEdit(row)} className="text-blue-600 hover:text-blue-900 mr-2 p-1 rounded">
+                      <PencilIcon className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => deleteRegistration(row.attendance_id)} className="text-red-600 hover:text-red-900 p-1 rounded">
+                      <TrashIcon className="w-4 h-4" />
                     </button>
                   </td>
                 </tr>
-
-                {/* Data Rows */}
-                {rows.map(row => (
-                  <tr key={row.attendance_id}>
-                    <td className="px-6 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.has(row.attendance_id)}
-                        onChange={(e) => {
-                          const newSet = new Set(selectedRows);
-                          e.target.checked ? newSet.add(row.attendance_id) : newSet.delete(row.attendance_id);
-                          setSelectedRows(newSet);
-                        }}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.attendance_id}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_no || 'N/A'}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.employee_name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.department || 'N/A'}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        row.mode_of_attendance === 'Onsite' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'
-                      }`}>
-                        {row.mode_of_attendance}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        row.validation_status === 'Registered' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                      }`}>
-                        {row.validation_status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <button onClick={() => startEdit(row)} className="text-blue-600 mr-2">
-                        <PencilIcon className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => deleteRegistration(row.attendance_id)} className="text-red-600">
-                        <TrashIcon className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </TableContainer>
-            </tbody>
+              ))}
+            </TableContainer>
+          </tbody>
           </table>
         </div>
       </motion.div>
