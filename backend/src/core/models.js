@@ -68,14 +68,16 @@ export const Evaluation = sequelize.define('evaluation', {
 
 
 export function registerModels() {
+  // Existing associations...
   Registration.belongsTo(Event, { foreignKey: 'event_id' });
   Event.hasMany(Registration, { foreignKey: 'event_id' });
 
   Attendance.belongsTo(Event, { foreignKey: 'event_id' });
   Event.hasMany(Attendance, { foreignKey: 'event_id' });
-  
-  // Relations (add to registerModels function)
+
+  // New Evaluation associations
   Evaluation.belongsTo(Event, { foreignKey: 'event_id' });
+  Evaluation.belongsTo(Dmag, { foreignKey: 'employee_no', as: 'employee' });
   Event.hasMany(Evaluation, { foreignKey: 'event_id' });
 }
 
